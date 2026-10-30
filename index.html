@@ -2,11 +2,14 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="color-scheme" content="dark">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#10141a">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
 <title>Ollama Code</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 30 16 16 30 2 16z' fill='%236cb6ff'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+<link rel="stylesheet" id="hl-theme" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
 <link rel="stylesheet" href="css/styles.css">
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script type="module" src="js/main.js"></script>
@@ -86,6 +89,7 @@
 
 <!-- ============ Workspace ============ -->
 <section id="v-ws" class="view" hidden>
+  <div class="scrim" id="scrim"></div>
   <aside id="left">
     <div class="sbh">
       <div class="logo sm"><span class="gem">◆</span> Ollama Code</div>
@@ -100,6 +104,7 @@
         <button class="btn sm" id="b-models" type="button">Models</button>
         <button class="btn sm" id="b-agents" type="button">Agents</button>
         <button class="btn sm" id="b-set" type="button">Settings</button>
+        <button class="btn sm" id="b-display" type="button" title="Theme, text size, code display">Aa</button>
       </div>
       <button class="acct" id="acct" type="button"></button>
     </div>

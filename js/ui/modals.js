@@ -6,14 +6,61 @@ import { ALL_TOOLS, BUILTIN_AGENTS, rebuildAgents } from '../agent/agents.js';
 import { getFirebaseConfig, getFirebaseOverrideText, setFirebaseOverride, signOut, resendVerification, authErrorText } from '../core/auth.js';
 import { LocalStore } from '../core/storage/local.js';
 import { loadSessions } from './sessions.js';
+import { display, setDisplay, resetDisplay } from './display.js';
 import { showAuth } from './auth.js';
 
 const field = (label, el) => h('label', { class: 'fld' }, label, el);
 const check = (el, label) => h('label', { class: 'check' }, el, label);
 const section = t => h('div', { class: 'sec-title' }, t);
 
+/* ---------------- Display (applies live, saved per device) ---------------- */
+function displayPane() {
+  const pane = h('div', { class: 'stack' });
+  const paint = () => {
+    const d = display;
+    const seg = (key, opts) => h('div', { class: 'seg' }, opts.map(([v, t]) =>
+      h('button', { type: 'button', class: d[key] === v ? 'on' : '', onclick: () => { setDisplay({ [key]: v }); paint(); } }, t)));
+    const slider = (key, min, max, step, unit) => {
+      const out = h('b', {}, d[key] + unit);
+      const r = h('input', { type: 'range', min: String(min), max: String(max), step: String(step), value: String(d[key]) });
+      r.addEventListener('input', () => { out.textContent = r.value + unit; setDisplay({ [key]: +r.value }); });
+      return h('div', { class: 'row slider' },
+        h('button', { class: 'btn sm', type: 'button', title: 'Smaller', onclick: () => { setDisplay({ [key]: Math.max(min, +(d[key] - step).toFixed(2)) }); paint(); } }, 'A−'),
+        r,
+        h('button', { class: 'btn sm', type: 'button', title: 'Larger', onclick: () => { setDisplay({ [key]: Math.min(max, +(d[key] + step).toFixed(2)) }); paint(); } }, 'A+'),
+        out);
+    };
+    const toggle = (key, label) => {
+      const c = h('input', { type: 'checkbox', checked: !!d[key] });
+      c.addEventListener('change', () => setDisplay({ [key]: c.checked }));
+      return check(c, label);
+    };
+    pane.replaceChildren(
+      h('div', { class: 'dim small' }, 'Changes apply immediately and are saved on this device, so your phone and computer can differ.'),
+      section('Theme'), seg('theme', [['dark', 'Dark'], ['light', 'Light'], ['auto', 'System']]),
+      section('Text size'), slider('fontSize', 11, 22, 1, 'px'),
+      section('Code size'), slider('codeSize', 10, 20, 0.5, 'px'),
+      h('div', { class: 'preview-box' },
+        h('div', {}, 'The quick brown fox jumps over the lazy dog.'),
+        h('pre', {}, 'const answer = 42; // code preview')),
+      section('Layout'),
+      h('div', { class: 'grid2' },
+        h('div', { class: 'fld' }, 'Density', seg('density', [['normal', 'Comfortable'], ['compact', 'Compact']])),
+        h('div', { class: 'fld' }, 'Chat width', seg('chatWidth', [['normal', 'Normal'], ['wide', 'Wide'], ['full', 'Full']]))),
+      section('Model thinking'),
+      seg('thinking', [['collapsed', 'Hidden (tap to show)'], ['live', 'Show while thinking'], ['expanded', 'Always shown']]),
+      section('Code blocks'),
+      toggle('lineNumbers', 'Show line numbers'),
+      toggle('wrapCode', 'Wrap long lines'),
+      h('div', { class: 'fld' }, 'Max height of a code block', seg('codeMaxHeight', [[320, 'Short'], [520, 'Medium'], [900, 'Tall'], [0, 'Unlimited']])),
+      h('div', { class: 'row end' }, h('button', { class: 'btn ghost sm', type: 'button', onclick: () => { resetDisplay(); paint(); } }, 'Reset display')));
+  };
+  paint();
+  return pane;
+}
+
 /* ---------------- Settings ---------------- */
-export function openSettings() {
+export function openSettings(tab = 'general') {
   modal((box, close) => {
     const s = state.settings;
     const num = (v, attrs) => h('input', { type: 'number', value: String(v), ...attrs });
@@ -30,8 +77,19 @@ export function openSettings() {
     const fb = h('textarea', { rows: 4, placeholder: 'Paste a Firebase web config here to override js/config.js (JSON or the JS object from the console). Leave empty to use the built-in one.' });
     fb.value = getFirebaseOverrideText();
 
-    box.append(
-      h('h3', {}, 'Settings'),
+    const general = h('div', { class: 'stack' });
+    const displayTab = displayPane();
+    const tabs = h('div', { class: 'seg tabs-seg' });
+    const showTab = t => {
+      general.hidden = t !== 'general';
+      displayTab.hidden = t !== 'display';
+      tabs.replaceChildren(...[['general', 'General'], ['display', 'Display & text']].map(([v, l]) =>
+        h('button', { type: 'button', class: v === t ? 'on' : '', onclick: () => showTab(v) }, l)));
+    };
+    box.append(h('h3', {}, 'Settings'), tabs, general, displayTab);
+    showTab(tab);
+
+    general.append(
       section('Model'),
       h('div', { class: 'grid2' }, field('Temperature', temp), field('Context window (num_ctx tokens)', ctx)),
       h('div', { class: 'grid2' }, field('Thinking (models that support it)', think), field('Max agent steps per message', steps)),

@@ -1,9 +1,12 @@
 // Chat rendering: message blocks (streaming text + thinking), tool cards (approve / ask),
 // notes, run summary footer, and re-rendering a stored conversation.
-import { $, h, esc } from '../util/dom.js';
-import { renderMarkdown } from '../util/markdown.js';
+import { $, h, esc, toast, promptDialog, confirmDialog } from '../util/dom.js';
+import { renderMarkdown, highlightCode, lineNumbers } from '../util/markdown.js';
 import { parseArgs, fmt, firstLine } from '../util/misc.js';
-import { emit } from '../core/state.js';
+import { state, emit } from '../core/state.js';
+import { normPath } from '../core/fs.js';
+import { display } from './display.js';
+import { buildDoc, runIn } from './sandbox.js';
 
 const isErrText = t => /^(Error|Denied|Interrupted)/.test(String(t || ''));
 const prefixLines = (t, p) => String(t ?? '').split('\n').map(l => p + l).join('\n');
@@ -89,41 +92,84 @@ export function createView(root, scrollEl = root) {
   return view;
 }
 
+/**
+ * Latest section title from a model's reasoning, e.g. "**Analyze the input:**",
+ * "## Plan", "1. **Check files**". Shown next to "Thinking" while it is collapsed.
+ */
+export function thinkingTitle(text) {
+  const lines = String(text || '').split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const l = lines[i];
+    const m = l.match(/^\s*(?:[-*]\s+|\d+[.)]\s+)?\*\*([^*\n]{2,90}?)\*\*/) || l.match(/^\s*#{1,4}\s+(.{2,90})$/);
+    if (m) return m[1].replace(/[:：.]\s*$/, '').trim();
+  }
+  return '';
+}
+
+function makeThinking(started) {
+  const label = h('span', { class: 'tk-label' }, 'Thinking');
+  const title = h('span', { class: 'tk-title' });
+  const body = h('div', { class: 'think-body md' });
+  const el = h('details', { class: 'think', hidden: true }, h('summary', { title: 'Show / hide reasoning' }, label, title), body);
+  let value = '', dirty = false, raf = 0, userToggled = false, autoOpened = false;
+  const render = () => { raf = 0; dirty = false; body.innerHTML = renderMarkdown(value, { highlight: false }); };
+  el.querySelector('summary').addEventListener('click', () => { userToggled = true; });
+  el.addEventListener('toggle', () => { if (el.open && dirty) render(); });
+  return {
+    el,
+    update(t, { done = false } = {}) {
+      if (!t) return;
+      value = t;
+      el.hidden = false;
+      const tt = thinkingTitle(t);
+      title.textContent = tt ? '· ' + tt : '';
+      if (done) { label.textContent = 'Thought'; }
+      else {
+        el.classList.add('live');
+        if (!userToggled && !autoOpened && display.thinking !== 'collapsed') { el.open = true; autoOpened = true; }
+      }
+      if (display.thinking === 'expanded' && !userToggled) el.open = true;
+      dirty = true;
+      if (el.open && !raf) raf = requestAnimationFrame(render);
+    },
+    /** The answer started (or the message ended): stop the "live" state. */
+    end() {
+      if (el.hidden || !el.classList.contains('live')) return;
+      el.classList.remove('live');
+      label.textContent = `Thought for ${fmt.dur(Date.now() - started)}`;
+      if (display.thinking === 'live' && !userToggled) el.open = false;
+      if (el.open) render();
+    },
+  };
+}
+
 function makeBlock(parent, label, down, scrollEl) {
   const el = h('div', { class: 'msg asst live' });
   const head = h('div', { class: 'who' }, label);
-  const thinkBody = h('div', { class: 'think-body' });
-  const summary = h('summary', {}, 'Thinking…');
-  const think = h('details', { class: 'think', hidden: true }, summary, thinkBody);
+  const started = Date.now();
+  const think = makeThinking(started);
   const text = h('div', { class: 'md' });
   const tools = h('div', { class: 'tools' });
-  el.append(head, think, text, tools);
+  el.append(head, think.el, text, tools);
   parent.append(el);
-  let raf = 0, value = '', collapsed = false;
-  const started = Date.now();
+  let raf = 0, value = '';
   const paint = final => { raf = 0; text.innerHTML = renderMarkdown(value, { highlight: final }); down(); };
   return {
     el,
-    thinking(t) {
-      if (!t) return;
-      think.hidden = false;
-      thinkBody.textContent = t;
-      if (!value && !collapsed) think.open = true;
-      down();
-    },
+    thinking(t, opts) { think.update(t, opts); down(); },
     text(t, final) {
       value = t || '';
-      if (value && !collapsed) { collapsed = true; think.open = false; summary.textContent = `Thought for ${fmt.dur(Date.now() - started)}`; }
+      if (value) think.end();
       if (final) { cancelAnimationFrame(raf); paint(true); }
       else if (!raf) raf = requestAnimationFrame(() => paint(false));
     },
     badge(t) { head.append(h('span', { class: 'badge' }, t)); },
-    tool(call) { const c = makeToolCard(call, down, scrollEl); tools.append(c.el); down(); return c; },
+    tool(call) { think.end(); const c = makeToolCard(call, down, scrollEl); tools.append(c.el); down(); return c; },
     finish() {
       if (raf) { cancelAnimationFrame(raf); paint(true); }
-      if (!collapsed && !think.hidden) { think.open = false; summary.textContent = 'Thinking'; }
+      think.end();
       el.classList.remove('live');
-      if (!value.trim() && think.hidden && !tools.children.length) el.remove();
+      if (!value.trim() && think.el.hidden && !tools.children.length) el.remove();
     },
   };
 }
@@ -197,7 +243,7 @@ export function renderThread(view, messages) {
     if (m.role === 'user') { if (m._auto) view.note('↻ ' + firstLine(m.content, 90), 'auto'); else view.user(m); continue; }
     if (m.role !== 'assistant') continue;
     const b = view.block(m._agent || 'assistant');
-    if (m.thinking) b.thinking(m.thinking);
+    if (m.thinking) b.thinking(m.thinking, { done: true });
     b.text(m.content || '', true);
     for (const call of m.tool_calls || []) {
       const card = b.tool(call);
@@ -213,12 +259,92 @@ export function renderThread(view, messages) {
 let mainView = null;
 export const getMainView = () => (mainView ||= createView($('#chat')));
 
+/* ---------- code block actions: Run (sandboxed), Edit, Save, Copy ---------- */
+
+const codeOf = block => block.querySelector('.cb-edit-area')?.value ?? block.querySelector('.cb-code code').textContent;
+const langOf = block => (block.dataset.lang || '').toLowerCase();
+const flash = (btn, text) => { const old = btn.textContent; btn.textContent = text; setTimeout(() => { btn.textContent = old; }, 1200); };
+
+/** CSS / JS blocks from the same message, merged into an HTML run when the page doesn't inline its own. */
+function siblingAssets(block, html) {
+  const md = block.closest('.md');
+  if (!md) return {};
+  const others = [...md.querySelectorAll(':scope > .codeblock, :scope .codeblock')].filter(b => b !== block);
+  const pick = langs => others.filter(b => langs.includes(langOf(b))).map(codeOf).join('\n\n');
+  const wantsCss = !/<style[\s>]/i.test(html) || /<link[^>]+href=["'](?!https?:|\/\/)[^"']+\.css/i.test(html);
+  const wantsJs = !/<script(?![^>]*\bsrc=)[^>]*>\s*\S/i.test(html) || /<script[^>]+src=["'](?!https?:|\/\/)[^"']+\.js/i.test(html);
+  return { css: wantsCss ? pick(['css']) : '', js: wantsJs ? pick(['js', 'javascript']) : '' };
+}
+
+function runBlock(block) {
+  const kind = block.dataset.run;
+  const getDoc = () => {
+    const code = codeOf(block);
+    return buildDoc(kind, code, kind === 'html' ? siblingAssets(block, code) : {});
+  };
+  let label = kind === 'js' ? 'JavaScript' : kind.toUpperCase();
+  if (kind === 'html') {
+    const extra = siblingAssets(block, codeOf(block));
+    const parts = [extra.css && 'CSS', extra.js && 'JS'].filter(Boolean);
+    if (parts.length) label += ` + ${parts.join(' + ')} from this message`;
+  }
+  runIn(block, { kind, getDoc, label });
+}
+
+function toggleEdit(block, btn) {
+  const pre = block.querySelector('.cb-code');
+  const gutter = block.querySelector('.cb-gutter');
+  const area = block.querySelector('.cb-edit-area');
+  if (!area) {
+    const ta = h('textarea', { class: 'cb-edit-area', spellcheck: false, autocapitalize: 'off', autocomplete: 'off' });
+    ta.value = pre.textContent;
+    ta.rows = Math.min(30, Math.max(6, ta.value.split('\n').length + 1));
+    ta.addEventListener('keydown', e => {
+      if (e.key === 'Tab') { e.preventDefault(); ta.setRangeText('  ', ta.selectionStart, ta.selectionEnd, 'end'); }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && block.dataset.run) { e.preventDefault(); runBlock(block); }
+    });
+    pre.hidden = true;
+    gutter.hidden = true;
+    pre.after(ta);
+    ta.focus();
+    btn.textContent = 'Done';
+    return;
+  }
+  const code = area.value;
+  pre.querySelector('code').innerHTML = highlightCode(code, langOf(block));
+  const n = code.split('\n').length;
+  gutter.textContent = lineNumbers(n);
+  block.querySelector('.cb-info').textContent = `${n} line${n === 1 ? '' : 's'} · edited`;
+  area.remove();
+  pre.hidden = false;
+  gutter.hidden = false;
+  btn.textContent = 'Edit';
+}
+
+const DEFAULT_NAMES = { html: 'index.html', htm: 'index.html', css: 'style.css', js: 'script.js', javascript: 'script.js', ts: 'main.ts', typescript: 'main.ts', py: 'main.py', python: 'main.py', json: 'data.json', svg: 'image.svg', md: 'README.md', markdown: 'README.md', sql: 'query.sql', sh: 'script.sh', bash: 'script.sh' };
+
+async function saveBlock(block, btn) {
+  const lang = langOf(block);
+  const name = await promptDialog('Save to workspace as', DEFAULT_NAMES[lang] || `snippet.${lang || 'txt'}`);
+  if (!name) return;
+  try {
+    const p = normPath(name);
+    if (await state.fs.exists(p) && !(await confirmDialog(`${p} already exists. Overwrite it?`, 'Overwrite'))) return;
+    await state.fs.write(p, codeOf(block));
+    emit('fs-changed', p);
+    flash(btn, 'Saved ✓');
+    toast(`Saved ${p}`);
+  } catch (e) { toast(e.message); }
+}
+
 export function initChat() {
   $('#chat').addEventListener('click', e => {
-    const btn = e.target.closest('.cb-copy');
+    const btn = e.target.closest('.cb-act button');
     if (!btn) return;
-    navigator.clipboard?.writeText(btn.closest('.codeblock').querySelector('code').textContent);
-    btn.textContent = 'Copied';
-    setTimeout(() => { btn.textContent = 'Copy'; }, 1200);
+    const block = btn.closest('.codeblock');
+    if (btn.classList.contains('cb-copy')) { navigator.clipboard?.writeText(codeOf(block)); flash(btn, 'Copied'); }
+    else if (btn.classList.contains('cb-run')) runBlock(block);
+    else if (btn.classList.contains('cb-edit')) toggleEdit(block, btn);
+    else if (btn.classList.contains('cb-save')) saveBlock(block, btn);
   });
 }

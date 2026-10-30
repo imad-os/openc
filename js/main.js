@@ -14,6 +14,7 @@ import { initComposer } from './ui/composer.js';
 import { initFiles } from './ui/files.js';
 import { initSessions, loadSessions } from './ui/sessions.js';
 import { initChat } from './ui/chat.js';
+import { applyDisplay } from './ui/display.js';
 
 async function loadUserData() {
   let settings = {};
@@ -65,6 +66,7 @@ async function onAuthChange(user) {
 }
 
 async function boot() {
+  applyDisplay();
   state.fs = new VirtualFS();
   try { state.agentId = localStorage.getItem('oc2.agent') || 'build'; } catch { /* ignore */ }
   initChat();

@@ -14,9 +14,13 @@ const pending = []; // base64 images
 
 export function initComposer() {
   const inp = $('#inp');
+  const phone = matchMedia('(max-width: 700px)');
+  const placeholder = () => { inp.placeholder = phone.matches ? 'Message the agent…' : 'Ask the agent to build something…  (Enter send · Shift+Enter newline · Tab switch agent · / commands)'; };
+  placeholder();
+  phone.addEventListener?.('change', placeholder);
   inp.addEventListener('input', autosize);
   inp.addEventListener('keydown', e => {
-    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !phone.matches) { e.preventDefault(); send(); }
     else if (e.key === 'Tab' && !e.shiftKey && !inp.value.includes('\n')) { e.preventDefault(); cycleAgent(); }
   });
   inp.addEventListener('paste', e => {
@@ -70,11 +74,12 @@ function command(text) {
     case 'model': case 'models': return showModels();
     case 'agents': return openAgents();
     case 'settings': return openSettings();
+    case 'display': return openSettings('display');
     case 'agent': {
       const a = primaryAgents().find(x => x.name === arg);
       return a ? setAgent(a.id) : toast('Agents: ' + primaryAgents().map(x => x.name).join(', '));
     }
-    default: toast('Commands: /new  /model  /agent <name>  /agents  /settings');
+    default: toast('Commands: /new  /model  /agent <name>  /agents  /settings  /display');
   }
 }
 

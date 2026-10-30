@@ -99,6 +99,62 @@ await page.click('.si:has-text("build a snake game")');
 await page.waitForSelector('#chat .runfoot');
 ok((await page.textContent('#chat')).includes('All done.'), 'stored conversation re-rendered with summary');
 
+// thinking hidden by default with live titles; code blocks run in a sandbox
+await page.click('#b-new');
+await page.click('#mchip');
+await page.click('.pop-row:has-text("mock-coder:27b")');
+await page.click('.pill:has-text("build")');
+await page.selectOption('#perm', 'auto');
+await page.fill('#inp', 'html demo');
+await page.press('#inp', 'Enter');
+await page.waitForSelector('#chat .runfoot');
+const think = page.locator('#chat details.think').last();
+ok(!(await think.evaluate(d => d.open)), 'thinking collapsed by default');
+ok((await think.locator('.tk-title').textContent()).includes('Draft the page'), 'thinking shows the latest title');
+await think.locator('summary').click();
+ok(await think.evaluate(d => d.open), 'tap on "Thinking" shows it');
+await think.locator('summary').click();
+ok(!(await think.evaluate(d => d.open)), 'tap again hides it');
+const html = page.locator('.codeblock[data-run="html"]').last();
+ok(await html.locator('.cb-gutter').isVisible(), 'code block has line numbers');
+if (await page.evaluate(() => !!window.hljs)) ok((await html.locator('.hljs span').count()) > 0, 'code block is syntax-highlighted');
+else console.log('  - highlight.js CDN not reachable here; skipped highlight check');
+await html.locator('.cb-run').click();
+const frame = html.locator('iframe.cbo-frame');
+ok((await frame.getAttribute('sandbox')).includes('allow-scripts') && !(await frame.getAttribute('sandbox')).includes('allow-same-origin'), 'runs in a sandboxed iframe (no same-origin)');
+ok((await html.locator('.cbo-bar').textContent()).includes('CSS + JS from this message'), 'HTML run merges CSS/JS blocks from the message');
+await page.waitForFunction(() => document.querySelector('.cbo-console')?.textContent.includes('hello from sandbox 42'));
+ok(true, 'console output bridged from the sandbox');
+const fr = page.frameLocator('.codeblock[data-run="html"] iframe.cbo-frame').last();
+ok((await fr.locator('button').evaluate(b => getComputedStyle(b).color)) === 'rgb(255, 0, 0)', 'merged CSS applied inside the sandbox');
+ok(await fr.locator('body').evaluate(() => { try { return localStorage.length >= 0 && false; } catch { return true; } }), 'sandbox cannot read the app storage');
+const js = page.locator('.codeblock[data-run="js"]').last();
+await js.locator('.cb-edit').click();
+await js.locator('.cb-edit-area').fill('console.log("edited", 1 + 1)');
+await js.locator('.cb-run').click();
+await page.waitForFunction(() => [...document.querySelectorAll('.cbo-console')].some(c => c.textContent.includes('edited 2')));
+ok(true, 'edited JS runs');
+await js.locator('.cb-edit').click();
+ok((await js.locator('.cb-info').textContent()).includes('edited'), 'edit applied back to the highlighted view');
+
+// display settings
+await page.click('#b-display');
+await page.click('.seg button:has-text("Light")');
+ok((await page.evaluate(() => document.documentElement.dataset.theme)) === 'light', 'light theme applies');
+const before = await page.evaluate(() => getComputedStyle(document.documentElement).fontSize);
+await page.click('.slider button[title=Larger] >> nth=0');
+const after = await page.evaluate(() => getComputedStyle(document.documentElement).fontSize);
+ok(parseFloat(after) > parseFloat(before), `text size grows (${before} → ${after})`);
+await page.keyboard.press('Escape');
+
+// phone layout: no horizontal overflow, 16px inputs (prevents iOS zoom)
+await page.setViewportSize({ width: 390, height: 800 });
+await page.waitForTimeout(200);
+ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth && document.body.scrollWidth <= innerWidth), 'no horizontal overflow on a phone');
+ok(parseFloat(await page.locator('#inp').evaluate(e => getComputedStyle(e).fontSize)) >= 16, 'composer font ≥ 16px on phones');
+await page.screenshot({ path: process.env.SHOT || '/tmp/phone.png' });
+await page.setViewportSize({ width: 1280, height: 800 });
+
 // cloud module parses
 await page.evaluate(() => import('./js/core/storage/cloud.js'));
 ok(true, 'cloud storage module loads');

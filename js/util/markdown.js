@@ -1,6 +1,7 @@
 // Small, safe Markdown renderer (escapes all HTML): headings, lists, task lists,
 // tables, quotes, rules, code blocks (highlight.js when loaded), inline code/bold/italic/links.
 import { esc } from './dom.js';
+import { runKind } from '../ui/sandbox.js';
 
 const BLOCK = /^\u0001(\d+)\u0001$/;
 const LIST = /^\s*(?:[-*+]|\d+[.)])\s+/;
@@ -23,17 +24,33 @@ function inline(t) {
   return t.replace(/\u0002(\d+)\u0002/g, (_, n) => `<code>${esc(codes[n])}</code>`);
 }
 
-function codeBlock(code, lang, highlight) {
-  let body = esc(code);
+/** Syntax-highlight code to HTML (escaped fallback when highlight.js is unavailable). */
+export function highlightCode(code, lang) {
   const hl = window.hljs;
-  if (highlight && hl && code.length < 60000) {
-    try {
-      body = lang && hl.getLanguage(lang)
-        ? hl.highlight(code, { language: lang, ignoreIllegals: true }).value
-        : code.length < 15000 ? hl.highlightAuto(code).value : body;
-    } catch { /* keep escaped text */ }
-  }
-  return `<div class="codeblock"><div class="cb-head"><span>${esc(lang || 'text')}</span><button class="cb-copy" type="button">Copy</button></div><pre><code class="hljs">${body}</code></pre></div>`;
+  if (!hl || code.length > 60000) return esc(code);
+  try {
+    if (lang && hl.getLanguage(lang)) return hl.highlight(code, { language: lang, ignoreIllegals: true }).value;
+    if (code.length < 15000) return hl.highlightAuto(code).value;
+  } catch { /* fall through */ }
+  return esc(code);
+}
+
+export const lineNumbers = n => Array.from({ length: n }, (_, i) => i + 1).join('\n');
+
+/** IDE-style block: language, line count, actions (only once the message is final), gutter. */
+function codeBlock(code, lang, final) {
+  const lines = code.split('\n').length;
+  const kind = runKind(lang, code);
+  const actions = final
+    ? `<span class="cb-act">${kind ? '<button class="cb-run" type="button" title="Run in a sandboxed frame">▶ Run</button>' : ''}` +
+      '<button class="cb-edit" type="button" title="Edit this code">Edit</button>' +
+      '<button class="cb-save" type="button" title="Save as a file in the workspace">Save</button>' +
+      '<button class="cb-copy" type="button">Copy</button></span>'
+    : '';
+  return `<div class="codeblock" data-lang="${esc(lang || '')}"${kind ? ` data-run="${kind}"` : ''}>` +
+    `<div class="cb-head"><span class="cb-lang">${esc(lang || 'text')}</span><span class="cb-info">${lines} line${lines === 1 ? '' : 's'}</span>${actions}</div>` +
+    `<div class="cb-body"><pre class="cb-gutter" aria-hidden="true">${lineNumbers(lines)}</pre>` +
+    `<pre class="cb-code"><code class="hljs">${final ? highlightCode(code, lang) : esc(code)}</code></pre></div></div>`;
 }
 
 function dedent(lines) {

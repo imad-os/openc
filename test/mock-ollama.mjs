@@ -17,6 +17,12 @@ function script(body) {
   const tools = msgs.filter(m => m.role === 'tool');
   const lastTool = tools[tools.length - 1];
   if (!body.tools) return { content: 'Hello from **chat** mode.' };
+  if (last.role === 'user' && /demo/i.test(last.content)) {
+    return {
+      thinking: 'Thinking Process:\n\n1.  **Analyze the input:** The user wants a demo.\n2.  **Draft the page:** Simple HTML with a button.\n',
+      content: 'Here is a page:\n\n```html\n<!doctype html>\n<html><body>\n<button id="b">Click</button>\n</body></html>\n```\n\n```css\nbutton { color: red }\n```\n\n```js\nconsole.log("hello from sandbox", 6 * 7);\n```',
+    };
+  }
   if (last.role === 'user' && /snake/i.test(last.content)) {
     return {
       thinking: 'The user wants a game. I will plan, then write index.html.',

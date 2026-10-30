@@ -3,6 +3,7 @@ import { state, on } from '../core/state.js';
 import { $, h, toast, promptDialog } from '../util/dom.js';
 import { normPath, VirtualFS, DirFS } from '../core/fs.js';
 import { invalidateFileCache } from '../agent/runner.js';
+import { openInNewTab, SANDBOX } from './sandbox.js';
 
 let dirty = false, previewing = false, refreshTimer = 0;
 
@@ -29,7 +30,7 @@ export function initFiles() {
   $('#v-prev').addEventListener('click', togglePreview);
   $('#v-tab').addEventListener('click', async () => {
     if (dirty) await save();
-    window.open(URL.createObjectURL(new Blob([await inlineHTML(state.openFile)], { type: 'text/html' })));
+    openInNewTab(await inlineHTML(state.openFile), state.openFile);
   });
   on('fs-changed', p => {
     clearTimeout(refreshTimer);
@@ -140,6 +141,7 @@ async function togglePreview() {
   previewing = !previewing;
   if (previewing) {
     if (dirty) await save();
+    $('#vpv').setAttribute('sandbox', SANDBOX);
     $('#vpv').srcdoc = await inlineHTML(state.openFile);
   }
   $('#vpv').hidden = !previewing;

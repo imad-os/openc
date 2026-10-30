@@ -17,11 +17,15 @@ export function initWorkspace() {
   $('#t-left').addEventListener('click', () => $('#left').classList.toggle('open'));
   $('#t-right').addEventListener('click', () => $('#right').classList.toggle('open'));
   $('#chat').addEventListener('click', () => $('#left').classList.remove('open'));
+  $('#scrim').addEventListener('click', () => { $('#left').classList.remove('open'); $('#right').classList.remove('open'); });
+  const syncScrim = () => $('#scrim').classList.toggle('on', $('#left').classList.contains('open') || $('#right').classList.contains('open'));
+  for (const id of ['#left', '#right']) new MutationObserver(syncScrim).observe($(id), { attributes: true, attributeFilter: ['class'] });
   $('#b-new').addEventListener('click', newSession);
   $('#b-models').addEventListener('click', showModels);
   $('#b-servers').addEventListener('click', () => { if (state.busy) return toast('Stop the agent first'); showConnect(); });
   $('#b-agents').addEventListener('click', openAgents);
-  $('#b-set').addEventListener('click', openSettings);
+  $('#b-set').addEventListener('click', () => openSettings());
+  $('#b-display').addEventListener('click', () => openSettings('display'));
   $('#acct').addEventListener('click', openAccount);
   on('settings', () => { $('#perm').value = state.settings.perm; updateStatus(); });
   on('model', updateTop);
