@@ -1,0 +1,117 @@
+rules_version = '2';
+
+// Ollama Code — Firestore security rules
+//
+// * Every user can only read and write documents under /users/{their own uid}.
+// * Nobody can list other users or touch any other path.
+// * Every write is schema-validated: only known fields, correct types, size limits.
+//
+// Deploy:  firebase deploy --only firestore:rules
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------- helpers ----------
+    function signedIn() { return request.auth != null; }
+    function isOwner(uid) { return signedIn() && request.auth.uid == uid; }
+    function data() { return request.resource.data; }
+    function onlyKeys(keys) { return data().keys().hasOnly(keys); }
+    function hasKeys(keys) { return data().keys().hasAll(keys); }
+    function validId(id) { return id.size() > 0 && id.size() <= 100; }
+
+    function isStr(v, min, max) { return v is string && v.size() >= min && v.size() <= max; }
+    function isNum(v, min, max) { return (v is int || v is float) && v >= min && v <= max; }
+    function isUrl(v) { return isStr(v, 8, 2048) && v.matches('^https?://.+'); }
+
+    function optStr(f, max) { return !(f in data()) || isStr(data()[f], 0, max); }
+    function optNum(f, min, max) { return !(f in data()) || isNum(data()[f], min, max); }
+    function optCount(f) { return optNum(f, 0, 9000000000000000000); }
+    function optTime(f) { return !(f in data()) || (data()[f] is int && data()[f] >= 0 && data()[f] < 100000000000000); }
+    function optBool(f) { return !(f in data()) || data()[f] is bool; }
+    function optList(f, max) { return !(f in data()) || (data()[f] is list && data()[f].size() <= max); }
+    function optMap(f, max) { return !(f in data()) || (data()[f] is map && data()[f].size() <= max); }
+
+    // ---------- schemas ----------
+    function validProfile() {
+      return onlyKeys(['email', 'created', 'updated', 'settings'])
+        && optStr('email', 320) && optTime('created') && optTime('updated') && optMap('settings', 40);
+    }
+
+    function validConnection() {
+      return onlyKeys(['url', 'key', 'label', 'created', 'lastUsed', 'lastModel'])
+        && hasKeys(['url']) && isUrl(data().url)
+        && optStr('key', 4096) && optStr('label', 120) && optStr('lastModel', 300)
+        && optTime('created') && optTime('lastUsed');
+    }
+
+    function validModelMeta() {
+      return onlyKeys(['url', 'model', 'rating', 'fav', 'note', 'lastUsed', 'updated',
+                       'runs', 'requests', 'evalTokens', 'evalNs', 'promptTokens', 'toolCalls', 'toolErrors'])
+        && hasKeys(['url', 'model']) && isUrl(data().url) && isStr(data().model, 1, 300)
+        && optNum('rating', 0, 5) && optBool('fav') && optStr('note', 2000)
+        && optTime('lastUsed') && optTime('updated')
+        && optCount('runs') && optCount('requests') && optCount('evalTokens') && optCount('evalNs')
+        && optCount('promptTokens') && optCount('toolCalls') && optCount('toolErrors');
+    }
+
+    function validAgent() {
+      return onlyKeys(['name', 'mode', 'desc', 'model', 'temperature', 'tools', 'prompt', 'updated'])
+        && hasKeys(['name', 'mode']) && isStr(data().name, 1, 64) && data().mode in ['primary', 'subagent']
+        && optStr('desc', 300) && optStr('model', 300) && optNum('temperature', 0, 2)
+        && optList('tools', 32) && optStr('prompt', 20000) && optTime('updated');
+    }
+
+    function validSession() {
+      return onlyKeys(['title', 'created', 'updated', 'url', 'model', 'agent', 'todos', 'summary', 'summaryUpto', 'count'])
+        && hasKeys(['title']) && isStr(data().title, 0, 200)
+        && optTime('created') && optTime('updated')
+        && optStr('url', 2048) && optStr('model', 300) && optStr('agent', 64)
+        && optList('todos', 200) && optStr('summary', 200000)
+        && optNum('summaryUpto', 0, 1000000) && optNum('count', 0, 1000000);
+    }
+
+    function validMessage() {
+      return onlyKeys(['seq', 'role', 'json']) && hasKeys(['seq', 'role', 'json'])
+        && data().seq is int && data().seq >= 0 && data().seq <= 1000000
+        && data().role in ['user', 'assistant', 'tool', 'system']
+        && isStr(data().json, 2, 900000);
+    }
+
+    // ---------- per-user data ----------
+    match /users/{uid} {
+      allow get: if isOwner(uid);
+      allow list: if false;
+      allow create, update: if isOwner(uid) && validProfile();
+      allow delete: if isOwner(uid);
+
+      match /connections/{id} {
+        allow read, delete: if isOwner(uid);
+        allow create, update: if isOwner(uid) && validId(id) && validConnection();
+      }
+
+      match /models/{id} {
+        allow read, delete: if isOwner(uid);
+        allow create, update: if isOwner(uid) && validId(id) && validModelMeta();
+      }
+
+      match /agents/{id} {
+        allow read, delete: if isOwner(uid);
+        allow create, update: if isOwner(uid) && validId(id) && validAgent();
+      }
+
+      match /sessions/{sid} {
+        allow read, delete: if isOwner(uid);
+        allow create, update: if isOwner(uid) && validId(sid) && validSession();
+
+        match /messages/{mid} {
+          allow read, delete: if isOwner(uid);
+          allow create, update: if isOwner(uid) && mid.size() <= 20 && validMessage();
+        }
+      }
+    }
+
+    // ---------- everything else is closed ----------
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

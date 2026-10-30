@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Ollama Code</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 30 16 16 30 2 16z' fill='%236cb6ff'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+<link rel="stylesheet" href="css/styles.css">
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script type="module" src="js/main.js"></script>
+</head>
+<body>
+<noscript>Ollama Code needs JavaScript.</noscript>
+
+<!-- ============ Sign in ============ -->
+<section id="v-auth" class="view center" hidden>
+  <div id="a-loading" class="dim">Loading…</div>
+  <div id="a-card" class="card" hidden>
+    <div class="logo"><span class="gem">◆</span> Ollama Code</div>
+    <p class="dim" id="a-sub">Sign in to keep your servers, API keys, model ratings and conversations in sync on every device.</p>
+    <button class="btn google" id="a-google" type="button"><span class="g">G</span> Continue with Google</button>
+    <div class="sep"><span>or use email</span></div>
+    <form id="a-form" class="stack">
+      <label class="fld">Email<input id="a-email" type="email" autocomplete="email" required></label>
+      <label class="fld">Password<input id="a-pass" type="password" autocomplete="current-password" minlength="6" required></label>
+      <button class="btn primary" id="a-submit" type="submit">Sign in</button>
+    </form>
+    <div class="row-between small"><a href="#" id="a-toggle">Create an account</a><a href="#" id="a-reset">Forgot password?</a></div>
+    <div id="a-msg" class="msgbox" hidden></div>
+    <button class="btn ghost" id="a-local" type="button">Continue without an account (this browser only)</button>
+  </div>
+</section>
+
+<!-- ============ Servers ============ -->
+<section id="v-connect" class="view center" hidden>
+  <div class="card wide-card">
+    <div class="row-between">
+      <div class="logo"><span class="gem">◆</span> Ollama Code</div>
+      <button class="btn sm ghost" id="c-account" type="button">Account</button>
+    </div>
+    <div id="c-saved"></div>
+    <form id="c-form" class="stack">
+      <div class="sec-title">Add a server</div>
+      <label class="fld">API URL<input id="c-url" placeholder="http://localhost:11434" autocomplete="url" required></label>
+      <div class="grid2">
+        <label class="fld">API key <em>(optional)</em><input id="c-key" type="password" autocomplete="off" placeholder="Leave empty if not needed"></label>
+        <label class="fld">Label <em>(optional)</em><input id="c-label" placeholder="Home PC"></label>
+      </div>
+      <label class="check"><input type="checkbox" id="c-savekey" checked> Save the API key with this server</label>
+      <button class="btn primary" id="c-go" type="submit">Connect</button>
+    </form>
+    <div id="c-err" class="msgbox err" hidden></div>
+  </div>
+</section>
+
+<!-- ============ Models ============ -->
+<section id="v-models" class="view scroll" hidden>
+  <header class="mh">
+    <div>
+      <div class="mh-title">Models <span class="dim" id="m-count"></span></div>
+      <div class="dim small" id="m-srv"></div>
+    </div>
+    <div class="mtools">
+      <input id="m-q" placeholder="Search models…">
+      <select id="m-sort" title="Sort">
+        <option value="smart">Favorites &amp; rating</option>
+        <option value="strength">Strength (estimated)</option>
+        <option value="speed">Speed (measured)</option>
+        <option value="rating">Your rating</option>
+        <option value="recent">Recently used</option>
+        <option value="newest">Newest</option>
+        <option value="name">Name</option>
+        <option value="size">Size: small first</option>
+        <option value="sizedesc">Size: large first</option>
+      </select>
+      <button class="btn" id="m-refresh" type="button">Refresh</button>
+      <button class="btn" id="m-servers" type="button">Servers</button>
+      <button class="btn primary" id="m-back" type="button" hidden>Back to chat</button>
+    </div>
+  </header>
+  <div class="chips" id="m-chips"></div>
+  <div class="grid" id="m-grid"></div>
+</section>
+
+<!-- ============ Workspace ============ -->
+<section id="v-ws" class="view" hidden>
+  <aside id="left">
+    <div class="sbh">
+      <div class="logo sm"><span class="gem">◆</span> Ollama Code</div>
+      <button class="btn primary" id="b-new" type="button">+ New session</button>
+      <input id="sess-q" placeholder="Search conversations…">
+    </div>
+    <div class="sess" id="sess"></div>
+    <div class="sbf">
+      <div class="dim small ellipsis" id="srv"></div>
+      <div class="btnrow">
+        <button class="btn sm" id="b-servers" type="button">Servers</button>
+        <button class="btn sm" id="b-models" type="button">Models</button>
+        <button class="btn sm" id="b-agents" type="button">Agents</button>
+        <button class="btn sm" id="b-set" type="button">Settings</button>
+      </div>
+      <button class="acct" id="acct" type="button"></button>
+    </div>
+  </aside>
+
+  <main>
+    <div id="top">
+      <button class="btn sm tbtn" id="t-left" type="button" aria-label="Sessions">☰</button>
+      <div class="grow ellipsis" id="title">New session</div>
+      <button class="mchip" id="mchip" type="button" title="Switch model"></button>
+      <select id="perm" title="What the agent may do without asking">
+        <option value="ask">Ask before changes</option>
+        <option value="edits">Auto-accept edits</option>
+        <option value="auto">Auto-accept all</option>
+      </select>
+      <button class="btn sm tbtn" id="t-right" type="button">Files</button>
+    </div>
+    <div id="chat"></div>
+    <div id="composer">
+      <div class="cbox">
+        <div id="atts"></div>
+        <div class="crow">
+          <button class="btn" id="b-att" type="button" title="Attach image (vision models)" hidden>＋</button>
+          <textarea id="inp" rows="1" placeholder="Ask the agent to build something…  (Enter send · Shift+Enter newline · Tab switch agent · / commands)"></textarea>
+          <button class="btn primary" id="b-send" type="button">Send</button>
+          <button class="btn danger" id="b-stop" type="button" hidden>Stop</button>
+        </div>
+        <div class="pills" id="pills"></div>
+        <div class="status"><span id="st-l"></span><span id="st-r"></span></div>
+        <input type="file" id="f-img" accept="image/*" multiple hidden>
+      </div>
+    </div>
+  </main>
+
+  <aside id="right">
+    <div class="tabs">
+      <button id="tab-files" class="on" type="button">Files</button>
+      <button id="tab-todos" type="button">Todos <span id="todo-count"></span></button>
+    </div>
+    <div id="p-files" class="rbody">
+      <div class="ftools">
+        <button class="btn sm" id="f-new" type="button">New file</button>
+        <button class="btn sm" id="f-up" type="button">Upload</button>
+        <button class="btn sm" id="f-open" type="button">Open folder</button>
+        <button class="btn sm" id="f-virt" type="button" hidden>Browser workspace</button>
+        <button class="btn sm" id="f-ref" type="button">Refresh</button>
+        <input type="file" id="f-in" multiple hidden>
+      </div>
+      <div class="dim small pad-x" id="fs-label"></div>
+      <div id="tree"></div>
+    </div>
+    <div id="p-todos" class="rbody" hidden></div>
+    <div id="viewer" hidden>
+      <div class="vh">
+        <b id="v-name" class="ellipsis"></b>
+        <button class="btn sm" id="v-prev" type="button" hidden>Preview</button>
+        <button class="btn sm" id="v-tab" type="button" hidden>New tab</button>
+        <button class="btn sm" id="v-dl" type="button">Download</button>
+        <button class="btn sm primary" id="v-save" type="button">Save</button>
+        <button class="btn sm" id="v-close" type="button">Close</button>
+      </div>
+      <textarea id="ved" spellcheck="false"></textarea>
+      <iframe id="vpv" hidden sandbox="allow-scripts allow-modals allow-forms allow-pointer-lock" title="Preview"></iframe>
+    </div>
+  </aside>
+</section>
+</body>
+</html>
