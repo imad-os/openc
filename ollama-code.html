@@ -1,0 +1,983 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ollama Code</title>
+<style>
+:root{--bg:#0a0c10;--p1:#10141a;--p2:#151a22;--p3:#1c232d;--line:#222a35;--tx:#d9e0ea;--dim:#7f8b9a;--ac:#6cb6ff;--ok:#4ade80;--warn:#fbbf24;--err:#f87171;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--tx);font:14px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overflow:hidden}
+button,input,select,textarea{font:inherit;color:inherit}
+input,select,textarea{background:var(--p2);border:1px solid var(--line);border-radius:8px;padding:8px 10px;outline:none;width:100%}
+input:focus,select:focus,textarea:focus{border-color:var(--ac)}
+a{color:var(--ac)}
+code,pre{font-family:var(--mono);font-size:12.5px}
+.dim{color:var(--dim)}.small{font-size:12px}
+[hidden]{display:none!important}
+.btn{background:var(--p3);border:1px solid var(--line);border-radius:8px;padding:6px 12px;cursor:pointer;white-space:nowrap}
+.btn:hover{border-color:#34404f}
+.btn.primary{background:var(--ac);color:#06121f;border-color:var(--ac);font-weight:600}
+.btn.ok{background:#14301f;border-color:#1f5a35;color:var(--ok)}
+.btn.danger{color:var(--err)}
+.btn.sm{padding:3px 8px;font-size:12px}
+.btn:disabled{opacity:.5;cursor:default}
+.view{position:absolute;inset:0}
+/* connect */
+.center{display:flex;align-items:center;justify-content:center;padding:20px;background:radial-gradient(900px 500px at 50% -10%,#14233a 0,transparent 60%)}
+.connect{width:100%;max-width:440px;background:var(--p1);border:1px solid var(--line);border-radius:16px;padding:28px;display:flex;flex-direction:column;gap:14px}
+.logo{font-size:22px;font-weight:700;letter-spacing:.3px}.logo span{color:var(--ac)}
+.connect label{display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--dim)}
+.connect label em{font-style:normal;opacity:.7}
+.connect label.chk{flex-direction:row;align-items:center;gap:8px}
+.connect label.chk input{width:auto}
+.errbox{background:#2a1416;border:1px solid #5a2327;color:#fda4a4;border-radius:8px;padding:10px;font-size:12.5px;white-space:pre-wrap;word-break:break-word}
+/* models */
+#models{display:flex;flex-direction:column;overflow:auto}
+.mh{display:flex;gap:16px;align-items:center;justify-content:space-between;padding:18px 24px;border-bottom:1px solid var(--line);flex-wrap:wrap;background:var(--p1);position:sticky;top:0;z-index:2}
+.mtools{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.mtools input{width:220px}.mtools select{width:auto}
+.chips{display:flex;gap:8px;padding:14px 24px 0;flex-wrap:wrap}
+.chip{border:1px solid var(--line);background:var(--p2);border-radius:999px;padding:4px 12px;cursor:pointer;font-size:12.5px}
+.chip.on{background:#12304d;border-color:var(--ac);color:#cfe8ff}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:14px;padding:18px 24px 40px}
+.mcard{background:var(--p1);border:1px solid var(--line);border-radius:12px;padding:14px;cursor:pointer;display:flex;flex-direction:column;gap:9px;transition:.12s}
+.mcard:hover{border-color:#3a4a5e;transform:translateY(-1px)}
+.mcard.sel{border-color:var(--ac);box-shadow:0 0 0 1px var(--ac) inset}
+.mtop{display:flex;justify-content:space-between;gap:8px;align-items:flex-start}
+.mname{word-break:break-all}
+.run{color:var(--ok);font-size:11.5px;white-space:nowrap}
+.tags{display:flex;gap:6px;flex-wrap:wrap}
+.tag{font-size:11px;padding:1px 8px;border-radius:999px;border:1px solid currentColor;background:color-mix(in srgb,currentColor 12%,transparent)}
+.tag.unk{color:var(--dim)}
+.meta{display:flex;gap:6px;flex-wrap:wrap}
+.meta span{font-size:11.5px;color:var(--dim);background:var(--p2);padding:1px 7px;border-radius:6px}
+/* workspace */
+#ws{display:grid;grid-template-columns:240px minmax(0,1fr) 340px}
+#ws.wide{grid-template-columns:240px minmax(0,1fr) 560px}
+aside{background:var(--p1);display:flex;flex-direction:column;min-height:0;min-width:0}
+#left{border-right:1px solid var(--line)}
+#right{border-left:1px solid var(--line);position:relative}
+.sbh{padding:12px;display:flex;flex-direction:column;gap:8px;border-bottom:1px solid var(--line)}
+.sess{flex:1;overflow:auto;padding:6px}
+.si{display:flex;align-items:center;gap:6px;padding:7px 9px;border-radius:8px;cursor:pointer;color:var(--dim)}
+.si:hover{background:var(--p2)}.si.on{background:var(--p3);color:var(--tx)}
+.si span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.si b{font-weight:400;opacity:0;padding:0 4px}.si:hover b{opacity:.8}
+.sbf{padding:10px 12px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:6px;font-size:12px}
+main{display:flex;flex-direction:column;min-width:0;min-height:0}
+#top{display:flex;align-items:center;gap:8px;padding:8px 14px;border-bottom:1px solid var(--line);background:var(--p1);flex-wrap:wrap}
+#top .grow{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+#top select{width:auto;padding:5px 8px}
+.mchip{display:flex;gap:6px;align-items:center;cursor:pointer;border:1px solid var(--line);background:var(--p2);border-radius:8px;padding:4px 10px;max-width:300px}
+.mchip b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}
+.tbtn{display:none}
+#chat{flex:1;overflow:auto;padding:18px;display:flex;flex-direction:column;gap:14px;scroll-behavior:auto}
+#chat>*{max-width:900px;width:100%;margin:0 auto}
+.msg.user{align-self:flex-end;background:var(--p3);border:1px solid var(--line);border-radius:12px;padding:10px 14px;white-space:pre-wrap;word-break:break-word}
+.msg.user img{max-height:120px;border-radius:8px;margin:4px 6px 0 0}
+.msg.asst{padding:0 2px}
+.who{font-size:11.5px;color:var(--ac);text-transform:uppercase;letter-spacing:.8px;font-weight:700}
+.msg.live .who::after{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ac);margin-left:8px;animation:pulse 1s infinite}
+@keyframes pulse{50%{opacity:.2}}
+.think{margin:6px 0;border-left:2px solid var(--line);padding-left:10px;color:var(--dim)}
+.think summary{cursor:pointer;font-size:12.5px}
+.thinkpre{white-space:pre-wrap;font-family:inherit;margin:6px 0;font-size:12.5px}
+.md p{margin:.45em 0}.md ul,.md ol{margin:.4em 0;padding-left:22px}
+.md h2,.md h3,.md h4,.md h5{margin:.9em 0 .3em}
+.md blockquote{margin:.4em 0;padding:0 12px;border-left:3px solid var(--line);color:var(--dim)}
+.md code{background:var(--p3);padding:1px 5px;border-radius:5px}
+.md pre.code{background:#0d1117;border:1px solid var(--line);border-radius:10px;margin:8px 0;overflow:auto}
+.md pre.code code{display:block;padding:10px 12px;background:none;white-space:pre}
+.lang{display:flex;justify-content:space-between;align-items:center;padding:3px 10px;font-size:11px;color:var(--dim);border-bottom:1px solid var(--line);font-family:var(--mono)}
+.lang button{background:none;border:0;color:var(--dim);cursor:pointer}
+.tools{display:flex;flex-direction:column;gap:6px;margin-top:6px}
+.tool{border:1px solid var(--line);border-radius:10px;background:var(--p1);overflow:hidden}
+.th{display:flex;gap:8px;align-items:center;padding:6px 10px;cursor:pointer;font-size:13px;min-width:0}
+.th b{font-family:var(--mono);font-weight:600;font-size:12.5px}
+.th .tt{color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);font-size:12px}
+.st{width:9px;height:9px;border-radius:50%;flex:none;background:var(--dim)}
+.st.running{background:var(--warn);animation:pulse 1s infinite}.st.ok{background:var(--ok)}.st.err{background:var(--err)}.st.pending{background:var(--ac)}
+.tb{display:none;padding:8px 10px;border-top:1px solid var(--line);gap:8px;flex-direction:column}
+.tool.open .tb{display:flex}
+.tb pre{margin:0;white-space:pre-wrap;word-break:break-word;max-height:300px;overflow:auto;background:#0d1117;border-radius:8px;padding:8px}
+.tres{color:#aeb8c6}
+.diff .del{color:#fca5a5}.diff .add{color:#86efac}
+.perm{display:none;gap:8px;align-items:center;flex-wrap:wrap;background:#1a2433;border-radius:8px;padding:8px}
+.perm:not(:empty){display:flex}
+.sub{display:flex;flex-direction:column;gap:10px;padding-left:10px;border-left:2px solid var(--line)}
+.sub:empty{display:none}
+.sub .msg.asst{font-size:13px}
+.errline{background:#2a1416;border:1px solid #5a2327;color:#fda4a4;border-radius:10px;padding:10px 12px;white-space:pre-wrap;word-break:break-word}
+.note{color:var(--dim);text-align:center;font-size:12.5px}
+.empty{text-align:center;margin-top:8vh}
+.empty h2{margin:0 0 6px}
+.sugg{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:18px}
+/* composer */
+#composer{border-top:1px solid var(--line);padding:10px 14px 8px;background:var(--p1)}
+.cbox{max-width:900px;margin:0 auto;display:flex;flex-direction:column;gap:6px}
+#atts{display:flex;gap:6px;flex-wrap:wrap}
+#atts div{position:relative}#atts img{height:48px;border-radius:6px;display:block}
+#atts button{position:absolute;top:-6px;right:-6px;border-radius:50%;border:0;width:18px;height:18px;line-height:16px;cursor:pointer;background:var(--err);color:#fff;padding:0}
+.crow{display:flex;gap:8px;align-items:flex-end}
+#inp{resize:none;max-height:200px;min-height:42px;flex:1}
+.pills{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.pill{border:1px solid var(--line);background:var(--p2);border-radius:999px;padding:2px 12px;cursor:pointer;font-size:12.5px}
+.pill.on{background:#12304d;border-color:var(--ac);color:#cfe8ff}
+.status{display:flex;justify-content:space-between;gap:10px;font-size:11.5px;color:var(--dim);flex-wrap:wrap}
+.status .warn{color:var(--warn)}
+/* right panel */
+.tabs{display:flex;border-bottom:1px solid var(--line)}
+.tabs button{flex:1;background:none;border:0;padding:10px;cursor:pointer;color:var(--dim);border-bottom:2px solid transparent}
+.tabs button.on{color:var(--tx);border-color:var(--ac)}
+.rbody{flex:1;overflow:auto;min-height:0}
+.ftools{display:flex;gap:6px;padding:8px;flex-wrap:wrap;border-bottom:1px solid var(--line)}
+.tree{padding:6px 0;font-size:13px;font-family:var(--mono)}
+.tree summary,.fi{cursor:pointer;padding:2px 8px;color:var(--dim);list-style:none}
+.tree summary::-webkit-details-marker{display:none}
+.fi{color:var(--tx)}.fi:hover,.tree summary:hover{background:var(--p2)}.fi.sel{background:#12304d}
+.todo{display:flex;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line)}
+.todo.completed{color:var(--dim);text-decoration:line-through}.todo.in_progress{color:var(--warn)}
+#viewer{position:absolute;inset:0;background:var(--p1);display:flex;flex-direction:column;z-index:3}
+.vh{display:flex;gap:6px;align-items:center;padding:8px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.vh b{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);font-size:12.5px}
+#ved{flex:1;border:0;border-radius:0;font-family:var(--mono);font-size:12.5px;resize:none;white-space:pre;tab-size:2}
+#vpv{flex:1;border:0;background:#fff;width:100%}
+/* modal */
+.modal{position:fixed;inset:0;background:#000a;display:flex;align-items:center;justify-content:center;z-index:50;padding:16px}
+.mbox{background:var(--p1);border:1px solid var(--line);border-radius:14px;width:100%;max-width:640px;max-height:90vh;overflow:auto;padding:20px;display:flex;flex-direction:column;gap:12px}
+.mbox h3{margin:0}
+.fld{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--dim)}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.checks{display:flex;gap:10px;flex-wrap:wrap}.checks label{display:flex;gap:5px;align-items:center;color:var(--tx);font-size:12.5px}.checks input{width:auto}
+.arow{display:flex;gap:8px;align-items:center;padding:8px 10px;border:1px solid var(--line);border-radius:10px}
+.arow div{flex:1;min-width:0}
+.toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--p3);border:1px solid var(--line);padding:8px 16px;border-radius:10px;z-index:99}
+@media(max-width:1000px){
+  #ws,#ws.wide{grid-template-columns:minmax(0,1fr)}
+  #left,#right{position:fixed;top:0;bottom:0;z-index:20;width:min(86vw,360px);transform:translateX(-105%);transition:.2s}
+  #right{right:0;left:auto;transform:translateX(105%)}
+  #left.open{transform:none}#right.open{transform:none}
+  .tbtn{display:inline-block}
+}
+</style>
+</head>
+<body>
+
+<section id="connect" class="view center">
+  <form class="connect" id="cform">
+    <div class="logo"><span>◆</span> Ollama Code</div>
+    <div class="dim">Connect to an Ollama API. The key is optional and stays in this browser.</div>
+    <label>API URL<input id="c-url" placeholder="http://localhost:11434" autocomplete="url" required></label>
+    <label>API key <em>(optional)</em><input id="c-key" type="password" placeholder="Leave empty if not required" autocomplete="off"></label>
+    <div id="c-recent" class="chips" style="padding:0" hidden></div>
+    <label class="chk"><input type="checkbox" id="c-rem" checked> Also remember the API key on this device</label>
+    <button class="btn primary" id="c-go" type="submit">Connect and load models</button>
+    <div id="c-err" class="errbox" hidden></div>
+  </form>
+</section>
+
+<section id="models" class="view" hidden>
+  <div class="mh">
+    <div><b style="font-size:18px">Models</b> <span class="dim" id="m-count"></span><div class="dim small" id="m-srv"></div></div>
+    <div class="mtools">
+      <input id="m-q" placeholder="Search models...">
+      <select id="m-sort">
+        <option value="modified">Newest</option><option value="name">Name</option>
+        <option value="size">Size (small first)</option><option value="sizedesc">Size (large first)</option><option value="params">Parameters</option>
+      </select>
+      <button class="btn" id="m-refresh">Refresh</button>
+      <button class="btn" id="m-back" hidden>Back to workspace</button>
+      <button class="btn danger" id="m-disc">Disconnect</button>
+    </div>
+  </div>
+  <div class="chips" id="m-chips"></div>
+  <div class="grid" id="m-grid"></div>
+</section>
+
+<section id="ws" class="view" hidden>
+  <aside id="left">
+    <div class="sbh">
+      <div class="logo" style="font-size:16px"><span>◆</span> Ollama Code</div>
+      <button class="btn primary" id="b-new">+ New session</button>
+    </div>
+    <div class="sess" id="sess"></div>
+    <div class="sbf">
+      <div class="dim" id="srv" style="word-break:break-all"></div>
+      <div style="display:flex;gap:6px"><button class="btn sm" id="b-models">Models</button><button class="btn sm" id="b-agents">Agents</button><button class="btn sm" id="b-set">Settings</button></div>
+    </div>
+  </aside>
+  <main>
+    <div id="top">
+      <button class="btn sm tbtn" id="t-left">☰</button>
+      <div class="grow" id="title">New session</div>
+      <div class="mchip" id="mchip" title="Change model"></div>
+      <select id="perm" title="Permissions for edits and code execution">
+        <option value="ask">Ask before changes</option><option value="edits">Auto-accept edits</option><option value="auto">Auto-accept all</option>
+      </select>
+      <button class="btn sm tbtn" id="t-right">Files</button>
+    </div>
+    <div id="chat"></div>
+    <div id="composer"><div class="cbox">
+      <div id="atts"></div>
+      <div class="crow">
+        <button class="btn" id="b-att" title="Attach image (vision models)" hidden>＋</button>
+        <textarea id="inp" rows="1" placeholder="Ask the agent to build something...   (Enter to send, Shift+Enter for newline, Tab switches agent, / for commands)"></textarea>
+        <button class="btn primary" id="b-send">Send</button>
+        <button class="btn danger" id="b-stop" hidden>Stop</button>
+      </div>
+      <div class="pills" id="pills"></div>
+      <div class="status"><span id="st-l"></span><span id="st-r"></span></div>
+      <input type="file" id="f-img" accept="image/*" multiple hidden>
+    </div></div>
+  </main>
+  <aside id="right">
+    <div class="tabs"><button id="tab-files" class="on">Files</button><button id="tab-todos">Todos</button></div>
+    <div id="p-files" class="rbody">
+      <div class="ftools">
+        <button class="btn sm" id="f-new">New file</button>
+        <button class="btn sm" id="f-up">Upload</button>
+        <button class="btn sm" id="f-open">Open folder</button>
+        <button class="btn sm" id="f-virt" hidden>Browser workspace</button>
+        <button class="btn sm" id="f-ref">Refresh</button>
+        <input type="file" id="f-in" multiple hidden>
+      </div>
+      <div class="dim small" id="fs-label" style="padding:6px 10px"></div>
+      <div id="tree"></div>
+    </div>
+    <div id="p-todos" class="rbody" hidden></div>
+    <div id="viewer" hidden>
+      <div class="vh"><b id="v-name"></b>
+        <button class="btn sm" id="v-prev" hidden>Preview</button>
+        <button class="btn sm" id="v-tab" hidden>New tab</button>
+        <button class="btn sm" id="v-dl">Download</button>
+        <button class="btn sm primary" id="v-save">Save</button>
+        <button class="btn sm" id="v-close">Close</button>
+      </div>
+      <textarea id="ved" spellcheck="false"></textarea>
+      <iframe id="vpv" hidden sandbox="allow-scripts allow-modals allow-forms allow-pointer-lock"></iframe>
+    </div>
+  </aside>
+</section>
+
+<script>
+'use strict';
+/* ============================ utils ============================ */
+const $ = (s, r = document) => r.querySelector(s);
+const h = (tag, props, ...kids) => {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(props || {})) {
+    if (k === 'class') e.className = v;
+    else if (k === 'html') e.innerHTML = v;
+    else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+    else if (v !== false && v != null) e.setAttribute(k, v === true ? '' : v);
+  }
+  for (const k of kids.flat(Infinity)) if (k != null && k !== false) e.append(k.nodeType ? k : document.createTextNode(k));
+  return e;
+};
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const store = {
+  get(k, d) { try { const v = localStorage.getItem('oc.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem('oc.' + k, JSON.stringify(v)); } catch {} },
+  del(k) { try { localStorage.removeItem('oc.' + k); } catch {} },
+};
+function toast(t) { const e = h('div', { class: 'toast' }, t); document.body.append(e); setTimeout(() => e.remove(), 2600); }
+const gb = n => (n / 1e9).toFixed(1) + ' GB';
+const kfmt = n => n >= 1e6 ? (n / 1048576).toFixed(0) + 'M' : n >= 1000 ? Math.round(n / 1024) + 'k' : String(n);
+const parseArgs = a => { if (a && typeof a === 'object') return a; try { return JSON.parse(a || '{}'); } catch { return {}; } };
+const prefixLines = (t, p) => String(t ?? '').split('\n').map(l => p + l).join('\n');
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+/* ============================ state ============================ */
+const S = {
+  conn: store.get('conn', { url: '', key: '' }),
+  models: [], running: {}, model: store.get('model', null),
+  settings: Object.assign({ temperature: 0.2, num_ctx: 16384, think: 'auto', maxSteps: 25, perm: 'ask' }, store.get('settings', {})),
+  agents: [], agentId: store.get('agent', 'build'),
+  sessions: store.get('sessions', []), sid: store.get('sid', null),
+  fs: null, openFile: null, busy: false, abort: null, stats: null, started: false,
+};
+const saveSettings = () => store.set('settings', S.settings);
+
+/* ============================ api ============================ */
+const base = () => S.conn.url.trim().replace(/\/+$/, '').replace(/\/api$/, '');
+async function api(path, body, signal) {
+  const hd = {};
+  if (body) hd['content-type'] = 'application/json';
+  if (S.conn.key) hd.authorization = 'Bearer ' + S.conn.key;
+  const r = await fetch(base() + path, { method: body ? 'POST' : 'GET', headers: hd, body: body ? JSON.stringify(body) : undefined, signal });
+  if (!r.ok) { let t = ''; try { t = await r.text(); } catch {} throw new Error(`HTTP ${r.status} ${t || r.statusText}`.slice(0, 400)); }
+  return r;
+}
+async function* ndjson(resp) {
+  const rd = resp.body.getReader(), dec = new TextDecoder(); let buf = '';
+  for (;;) {
+    const { done, value } = await rd.read(); if (done) break;
+    buf += dec.decode(value, { stream: true });
+    const ls = buf.split('\n'); buf = ls.pop();
+    for (const l of ls) if (l.trim()) yield JSON.parse(l);
+  }
+  if (buf.trim()) yield JSON.parse(buf);
+}
+
+/* ============================ views ============================ */
+function view(n) {
+  for (const id of ['connect', 'models', 'ws']) $('#' + id).hidden = id !== n;
+}
+
+/* ============================ connect ============================ */
+/* URL history: URLs are always saved locally (keys only when the checkbox is on) */
+const urlHist = () => store.get('urls', []);
+function rememberUrl(url, key) {
+  const l = urlHist().filter(x => x.url !== url);
+  l.unshift({ url, key: $('#c-rem').checked ? key : '', t: Date.now() });
+  store.set('urls', l.slice(0, 12));
+}
+function paintRecent() {
+  const box = $('#c-recent'), l = urlHist(); box.innerHTML = ''; box.hidden = !l.length;
+  l.forEach(x => box.append(h('span', { class: 'chip', title: 'Use this URL', onclick: () => { $('#c-url').value = x.url; $('#c-key').value = x.key || ''; } },
+    x.url.replace(/^https?:\/\//, ''), ' ', h('b', { title: 'Remove', style: 'opacity:.6;margin-left:4px', onclick: ev => { ev.stopPropagation(); store.set('urls', urlHist().filter(y => y.url !== x.url)); paintRecent(); } }, '×'))));
+}
+$('#c-url').value = S.conn.url || (urlHist()[0] || {}).url || ''; $('#c-key').value = S.conn.key || (urlHist()[0] || {}).key || '';
+paintRecent();
+$('#cform').addEventListener('submit', async e => {
+  e.preventDefault();
+  const err = $('#c-err'); err.hidden = true;
+  S.conn = { url: $('#c-url').value.trim(), key: $('#c-key').value.trim() };
+  if (!/^https?:\/\//i.test(S.conn.url)) S.conn.url = 'http://' + S.conn.url;
+  $('#c-go').disabled = true; $('#c-go').textContent = 'Connecting...';
+  try {
+    await loadModels();
+    store.set('conn', { url: S.conn.url, key: $('#c-rem').checked ? S.conn.key : '' });
+    rememberUrl(S.conn.url, S.conn.key); paintRecent();
+    showModels();
+  } catch (ex) {
+    err.hidden = false;
+    err.textContent = 'Could not connect: ' + ex.message +
+      '\n\nChecklist:\n- Is the URL reachable from this browser?\n- CORS: start Ollama with OLLAMA_ORIGINS="*" (or allow this page\'s origin)\n- If this page is on https, the API must be https too (mixed content is blocked)\n- If the server needs a key, enter it above';
+  } finally { $('#c-go').disabled = false; $('#c-go').textContent = 'Connect and load models'; }
+});
+
+/* ============================ models ============================ */
+const CAP = { completion: '#8b98a8', vision: '#b794f6', tools: '#4ade80', thinking: '#fbbf24', audio: '#f472b6', embedding: '#2dd4bf', insert: '#8b98a8' };
+const capTag = c => h('span', { class: 'tag', style: `color:${CAP[c] || '#8b98a8'}` }, c);
+const modelCaps = (n = S.model) => (S.models.find(m => m.name === n) || {}).caps || [];
+const MV = { q: '', caps: new Set(), sort: 'modified' };
+
+async function loadModels() {
+  const j = await (await api('/api/tags')).json();
+  S.models = (j.models || []).map(m => ({ ...m, name: m.name || m.model, caps: Array.isArray(m.capabilities) ? m.capabilities : null, _d: Array.isArray(m.capabilities) ? 'done' : 'pending' }));
+  try { const p = await (await api('/api/ps')).json(); S.running = Object.fromEntries((p.models || []).map(m => [m.name, m])); } catch { S.running = {}; }
+  detectCaps();
+}
+async function detectCaps() {
+  const todo = S.models.filter(m => m._d === 'pending');
+  let i = 0, lastPaint = 0;
+  const worker = async () => {
+    while (i < todo.length) {
+      const m = todo[i++];
+      try { const j = await (await api('/api/show', { model: m.name })).json(); m.caps = j.capabilities || []; if (!m.details?.context_length && j.model_info) { const k = Object.keys(j.model_info).find(x => x.endsWith('.context_length')); if (k) m.details = { ...(m.details || {}), context_length: j.model_info[k] }; } }
+      catch { m.caps = []; }
+      m._d = 'done';
+      if (Date.now() - lastPaint > 300) { lastPaint = Date.now(); paintModels(); }
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);
+  paintModels(); updateTop();
+}
+function showModels() { view('models'); $('#m-back').hidden = !S.started; $('#m-srv').textContent = base(); paintModels(); }
+function paramNum(m) { const p = parseFloat((m.details || {}).parameter_size); return isNaN(p) ? 0 : p; }
+function paintModels() {
+  if ($('#models').hidden) return;
+  const all = S.models;
+  $('#m-count').textContent = `${all.length} model${all.length === 1 ? '' : 's'}`;
+  const present = {}; all.forEach(m => (m.caps || []).forEach(c => present[c] = (present[c] || 0) + 1));
+  const chips = $('#m-chips'); chips.innerHTML = '';
+  Object.keys(present).sort().forEach(c => chips.append(h('span', { class: 'chip' + (MV.caps.has(c) ? ' on' : ''), onclick: () => { MV.caps.has(c) ? MV.caps.delete(c) : MV.caps.add(c); paintModels(); } }, `${c} · ${present[c]}`)));
+  const q = MV.q.toLowerCase();
+  let list = all.filter(m => (!q || m.name.toLowerCase().includes(q) || JSON.stringify(m.details || {}).toLowerCase().includes(q)) && [...MV.caps].every(c => (m.caps || []).includes(c)));
+  const sorters = { modified: (a, b) => new Date(b.modified_at || 0) - new Date(a.modified_at || 0), name: (a, b) => a.name.localeCompare(b.name), size: (a, b) => a.size - b.size, sizedesc: (a, b) => b.size - a.size, params: (a, b) => paramNum(b) - paramNum(a) };
+  list.sort(sorters[MV.sort]);
+  const grid = $('#m-grid'); grid.innerHTML = '';
+  if (!list.length) grid.append(h('div', { class: 'dim' }, 'No models match.'));
+  for (const m of list) {
+    const d = m.details || {};
+    grid.append(h('div', { class: 'mcard' + (m.name === S.model ? ' sel' : ''), onclick: () => pickModel(m.name) },
+      h('div', { class: 'mtop' }, h('b', { class: 'mname' }, m.name), S.running[m.name] ? h('span', { class: 'run', title: 'Loaded in memory' }, '● loaded') : null),
+      h('div', { class: 'tags' }, m.caps ? (m.caps.length ? m.caps.map(capTag) : h('span', { class: 'tag unk' }, 'unknown')) : h('span', { class: 'tag unk' }, 'detecting...')),
+      h('div', { class: 'meta' }, [d.parameter_size, d.quantization_level, m.size ? gb(m.size) : null, d.context_length ? kfmt(d.context_length) + ' ctx' : null, d.family].filter(Boolean).map(x => h('span', {}, x))),
+      m.modified_at ? h('div', { class: 'dim small' }, 'Updated ' + new Date(m.modified_at).toLocaleDateString()) : null));
+  }
+}
+$('#m-q').addEventListener('input', e => { MV.q = e.target.value; paintModels(); });
+$('#m-sort').addEventListener('change', e => { MV.sort = e.target.value; paintModels(); });
+$('#m-refresh').addEventListener('click', async () => { try { await loadModels(); paintModels(); toast('Models refreshed'); } catch (e) { toast(e.message); } });
+$('#m-back').addEventListener('click', () => { view('ws'); });
+$('#m-disc').addEventListener('click', () => { if (S.busy) S.abort?.abort(); S.started = false; view('connect'); });
+function pickModel(n) {
+  S.model = n; store.set('model', n);
+  if (!modelCaps(n).includes('tools') && S.models.find(m => m.name === n)?.caps?.length) toast('This model has no "tools" capability, so agents cannot use tools with it.');
+  enterWorkspace();
+}
+
+/* ============================ filesystem ============================ */
+const SKIP = /(^|\/)(node_modules|\.git|\.next|dist|__pycache__|\.venv|\.DS_Store)(\/|$)/;
+function normPath(p) {
+  p = String(p ?? '').replace(/\\/g, '/').replace(/^(\.\/)+/, '').replace(/^\/+/, '').replace(/\/+/g, '/').replace(/\/$/, '');
+  if (p.split('/').some(s => s === '..')) throw new Error('Path escapes the workspace');
+  return p;
+}
+class VirtualFS {
+  constructor() { this.label = 'Browser workspace (virtual, saved locally)'; this.virtual = true; this.files = store.get('vfs', {}); }
+  async list() { return Object.keys(this.files).sort(); }
+  async read(p) { if (!(p in this.files)) throw new Error('File not found: ' + p); return this.files[p]; }
+  async write(p, c) { if (!p) throw new Error('Empty path'); this.files[p] = c; store.set('vfs', this.files); }
+  async del(p) { if (!(p in this.files)) throw new Error('File not found: ' + p); delete this.files[p]; store.set('vfs', this.files); }
+}
+class DirFS {
+  constructor(handle) { this.root = handle; this.label = 'Folder: ' + handle.name; }
+  async walk(dir, prefix, out, depth) {
+    if (depth > 8 || out.length > 3000) return;
+    for await (const [name, hd] of dir.entries()) {
+      const path = prefix + name; if (SKIP.test(path)) continue;
+      if (hd.kind === 'file') out.push(path); else await this.walk(hd, path + '/', out, depth + 1);
+    }
+  }
+  async list() { const out = []; await this.walk(this.root, '', out, 0); return out.sort(); }
+  async dir(p, create) { let d = this.root; for (const s of p.split('/').filter(Boolean)) d = await d.getDirectoryHandle(s, { create }); return d; }
+  async fh(p, create) { const parts = p.split('/'); const name = parts.pop(); return (await this.dir(parts.join('/'), create)).getFileHandle(name, { create }); }
+  async read(p) { try { return await (await (await this.fh(p, false)).getFile()).text(); } catch { throw new Error('File not found: ' + p); } }
+  async write(p, c) { if (!p) throw new Error('Empty path'); const w = await (await this.fh(p, true)).createWritable(); await w.write(c); await w.close(); }
+  async del(p) { const parts = p.split('/'); const name = parts.pop(); try { await (await this.dir(parts.join('/'), false)).removeEntry(name); } catch { throw new Error('File not found: ' + p); } }
+}
+S.fs = new VirtualFS();
+
+let refTimer = 0;
+function fsChanged(path) {
+  clearTimeout(refTimer); refTimer = setTimeout(async () => {
+    await refreshFiles();
+    if (S.openFile && S.openFile === path && !$('#viewer').hidden && !viewerDirty) openFile(path, true);
+  }, 120);
+}
+async function refreshFiles() {
+  $('#fs-label').textContent = S.fs.label;
+  $('#f-virt').hidden = !!S.fs.virtual; $('#f-open').hidden = !S.fs.virtual;
+  let files = []; try { files = await S.fs.list(); } catch (e) { toast(e.message); }
+  const t = $('#tree'); t.innerHTML = '';
+  if (!files.length) { t.append(h('div', { class: 'dim', style: 'padding:14px' }, 'No files yet. Ask the agent to create something, or upload/open a folder.')); return; }
+  const root = {};
+  for (const f of files) { let n = root; const parts = f.split('/'); parts.forEach((p, i) => { if (i === parts.length - 1) n[p] = f; else n = (n[p] = typeof n[p] === 'object' ? n[p] : {}); }); }
+  const el = h('div', { class: 'tree' });
+  const draw = (node, parent, depth) => {
+    const keys = Object.keys(node).sort((a, b) => { const da = typeof node[a] === 'object', db = typeof node[b] === 'object'; return da === db ? a.localeCompare(b) : da ? -1 : 1; });
+    for (const k of keys) {
+      const v = node[k];
+      if (typeof v === 'string') parent.append(h('div', { class: 'fi' + (S.openFile === v ? ' sel' : ''), style: `padding-left:${8 + depth * 14}px`, onclick: () => openFile(v) }, k));
+      else { const d = h('details', { open: depth < 2 }, h('summary', { style: `padding-left:${8 + depth * 14}px` }, k + '/')); draw(v, d, depth + 1); parent.append(d); }
+    }
+  };
+  draw(root, el, 0); t.append(el);
+}
+let viewerDirty = false, previewing = false;
+async function openFile(path, quiet) {
+  try {
+    const txt = await S.fs.read(path);
+    S.openFile = path; viewerDirty = false; previewing = false;
+    $('#v-name').textContent = path; $('#ved').value = txt; $('#ved').hidden = false; $('#vpv').hidden = true;
+    const isHtml = /\.html?$/i.test(path); $('#v-prev').hidden = !isHtml; $('#v-tab').hidden = !isHtml; $('#v-prev').textContent = 'Preview';
+    $('#viewer').hidden = false; $('#ws').classList.add('wide'); $('#right').classList.add('open');
+    if (!quiet) refreshFiles();
+  } catch (e) { toast(e.message); }
+}
+function closeViewer() { $('#viewer').hidden = true; $('#ws').classList.remove('wide'); S.openFile = null; refreshFiles(); }
+async function replaceAsync(str, re, fn) { const ms = [...str.matchAll(re)]; const rs = await Promise.all(ms.map(m => fn(...m))); let i = 0; return str.replace(re, () => rs[i++]); }
+async function inlineHTML(path) {
+  let html = await S.fs.read(path);
+  const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/') + 1) : '';
+  const files = await S.fs.list();
+  const find = src => { if (/^([a-z]+:)?\/\//i.test(src) || src.startsWith('data:')) return null; try { const p = normPath(dir + src.replace(/^\.?\//, '')); return files.includes(p) ? p : null; } catch { return null; } };
+  html = await replaceAsync(html, /<link[^>]+href=["']([^"']+\.css)["'][^>]*>/gi, async (m, src) => { const p = find(src); return p ? '<style>' + await S.fs.read(p) + '</style>' : m; });
+  html = await replaceAsync(html, /<script([^>]*?)\ssrc=["']([^"']+)["']([^>]*)><\/script>/gi, async (m, a, src, b) => { const p = find(src); return p ? '<script' + a + b + '>' + (await S.fs.read(p)).replace(/<\/script/gi, '<\\/script') + '<\/script>' : m; });
+  return html;
+}
+$('#ved').addEventListener('input', () => { viewerDirty = true; });
+$('#ved').addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); saveViewer(); }
+  if (e.key === 'Tab') { e.preventDefault(); const t = e.target, s = t.selectionStart; t.setRangeText('  ', s, t.selectionEnd, 'end'); viewerDirty = true; }
+});
+async function saveViewer() { try { await S.fs.write(S.openFile, $('#ved').value); viewerDirty = false; toast('Saved ' + S.openFile); refreshFiles(); } catch (e) { toast(e.message); } }
+$('#v-save').addEventListener('click', saveViewer);
+$('#v-close').addEventListener('click', closeViewer);
+$('#v-dl').addEventListener('click', () => { const a = h('a', { href: URL.createObjectURL(new Blob([$('#ved').value])), download: S.openFile.split('/').pop() }); a.click(); });
+$('#v-prev').addEventListener('click', async () => {
+  previewing = !previewing;
+  if (previewing) { if (viewerDirty) await saveViewer(); $('#vpv').srcdoc = await inlineHTML(S.openFile); }
+  $('#vpv').hidden = !previewing; $('#ved').hidden = previewing; $('#v-prev').textContent = previewing ? 'Edit' : 'Preview';
+});
+$('#v-tab').addEventListener('click', async () => { if (viewerDirty) await saveViewer(); window.open(URL.createObjectURL(new Blob([await inlineHTML(S.openFile)], { type: 'text/html' }))); });
+$('#f-ref').addEventListener('click', refreshFiles);
+$('#f-new').addEventListener('click', async () => {
+  const n = prompt('New file path (e.g. src/app.js):'); if (!n) return;
+  try { const p = normPath(n); await S.fs.write(p, ''); await refreshFiles(); openFile(p); } catch (e) { toast(e.message); }
+});
+$('#f-up').addEventListener('click', () => $('#f-in').click());
+$('#f-in').addEventListener('change', async e => {
+  for (const f of e.target.files) { try { await S.fs.write(normPath(f.name), await f.text()); } catch (x) { toast(x.message); } }
+  e.target.value = ''; refreshFiles();
+});
+$('#f-open').addEventListener('click', async () => {
+  if (!window.showDirectoryPicker) return toast('Your browser cannot open local folders (use Chrome or Edge). Using the browser workspace.');
+  try { const hd = await window.showDirectoryPicker({ mode: 'readwrite' }); S.fs = new DirFS(hd); S.openFile = null; $('#viewer').hidden = true; await refreshFiles(); toast('Opened ' + hd.name); } catch {}
+});
+$('#f-virt').addEventListener('click', () => { S.fs = new VirtualFS(); $('#viewer').hidden = true; refreshFiles(); });
+$('#tab-files').addEventListener('click', () => { $('#tab-files').classList.add('on'); $('#tab-todos').classList.remove('on'); $('#p-files').hidden = false; $('#p-todos').hidden = true; });
+$('#tab-todos').addEventListener('click', () => { $('#tab-todos').classList.add('on'); $('#tab-files').classList.remove('on'); $('#p-files').hidden = true; $('#p-todos').hidden = false; });
+
+/* ============================ markdown ============================ */
+function md(src) {
+  const codes = [];
+  src = src.replace(/```([\w+#.-]*)[^\n]*\n([\s\S]*?)(?:```|$)/g, (_, l, c) => { codes.push(`<pre class="code"><div class="lang"><span>${esc(l || 'text')}</span><button class="copy">copy</button></div><code>${esc(c.replace(/\n$/, ''))}</code></pre>`); return '\u0001' + (codes.length - 1) + '\u0001'; });
+  const inl = t => esc(t).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/(^|[^*])\*([^*\s][^*]*)\*/g, '$1<i>$2</i>').replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  let html = '', para = [], list = null;
+  const fp = () => { if (para.length) { html += '<p>' + para.map(inl).join('<br>') + '</p>'; para = []; } };
+  const fl = () => { if (list) { html += `<${list.t}>` + list.items.map(i => '<li>' + inl(i) + '</li>').join('') + `</${list.t}>`; list = null; } };
+  for (const ln of src.split('\n')) {
+    let m;
+    if (/^\u0001\d+\u0001$/.test(ln)) { fp(); fl(); html += ln; }
+    else if ((m = ln.match(/^(#{1,4})\s+(.*)/))) { fp(); fl(); const n = m[1].length + 1; html += `<h${n}>${inl(m[2])}</h${n}>`; }
+    else if ((m = ln.match(/^\s*[-*]\s+(.*)/))) { fp(); if (!list || list.t !== 'ul') { fl(); list = { t: 'ul', items: [] }; } list.items.push(m[1]); }
+    else if ((m = ln.match(/^\s*\d+[.)]\s+(.*)/))) { fp(); if (!list || list.t !== 'ol') { fl(); list = { t: 'ol', items: [] }; } list.items.push(m[1]); }
+    else if (/^>\s?/.test(ln)) { fp(); fl(); html += '<blockquote>' + inl(ln.replace(/^>\s?/, '')) + '</blockquote>'; }
+    else if (!ln.trim()) { fp(); fl(); }
+    else { fl(); para.push(ln); }
+  }
+  fp(); fl();
+  return html.replace(/\u0001(\d+)\u0001/g, (_, i) => codes[i]);
+}
+$('#chat').addEventListener('click', e => {
+  if (e.target.classList.contains('copy')) { const c = e.target.closest('pre').querySelector('code').textContent; navigator.clipboard?.writeText(c); e.target.textContent = 'copied'; setTimeout(() => e.target.textContent = 'copy', 1200); }
+});
+
+/* ============================ tools ============================ */
+const summary = (n, a) => String(({ list_files: a.path || '.', read_file: a.path, write_file: a.path, edit_file: a.path, delete_file: a.path, grep: a.pattern, run_js: '', todo_write: (a.todos || []).length + ' items', task: (a.agent || '') + ': ' + String(a.prompt || '').slice(0, 80) })[n] ?? '');
+function argPreview(n, a) {
+  const code = (t, cls = '') => `<pre class="${cls}">${esc(t)}</pre>`;
+  if (n === 'write_file') { const ls = String(a.content ?? '').split('\n'); return `<div class="dim small">${esc(a.path)} · ${ls.length} lines</div>` + code(ls.slice(0, 40).join('\n') + (ls.length > 40 ? '\n...' : '')); }
+  if (n === 'edit_file') return `<div class="dim small">${esc(a.path)}</div><pre class="diff"><span class="del">${esc(prefixLines(a.old_string, '- '))}</span>\n<span class="add">${esc(prefixLines(a.new_string, '+ '))}</span></pre>`;
+  if (n === 'run_js') return code(a.code ?? '');
+  if (n === 'task') return `<div class="dim small">subagent: ${esc(a.agent ?? '')}</div>` + code(a.prompt ?? '');
+  return code(JSON.stringify(a, null, 2));
+}
+function runJS(code, timeout = 10000) {
+  return new Promise(res => {
+    const src = [
+      'const __o=[];const __f=(...a)=>__o.push(a.map(x=>{try{return typeof x==="string"?x:JSON.stringify(x)}catch(e){return String(x)}}).join(" "));',
+      'console.log=console.info=console.warn=console.error=__f;',
+      'self.onmessage=async e=>{try{const AF=Object.getPrototypeOf(async function(){}).constructor;const r=await new AF(e.data)();',
+      'postMessage({out:__o.join("\\n"),ret:r===undefined?undefined:(typeof r==="string"?r:JSON.stringify(r))})}',
+      'catch(err){postMessage({out:__o.join("\\n"),err:String(err&&err.stack||err)})}}'
+    ].join('');
+    const url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
+    const w = new Worker(url);
+    const done = v => { clearTimeout(t); w.terminate(); URL.revokeObjectURL(url); res(v); };
+    const t = setTimeout(() => done('Error: timed out after ' + timeout / 1000 + 's'), timeout);
+    w.onmessage = e => { const { out, ret, err } = e.data; done([out && 'stdout:\n' + out, ret !== undefined && 'return: ' + ret, err && 'Error: ' + err].filter(Boolean).join('\n') || '(no output)'); };
+    w.onerror = e => done('Error: ' + e.message);
+    w.postMessage(code);
+  });
+}
+const TOOLS = {
+  list_files: { ro: 1, desc: 'List files in the workspace, optionally under a directory prefix.', params: { path: { type: 'string', description: 'Directory prefix, default is the root' } },
+    run: async ({ path = '' }) => { const p = normPath(path); const pref = p ? p + '/' : ''; const m = (await S.fs.list()).filter(f => !pref || f.startsWith(pref)); if (!m.length) return p ? 'No files under ' + p : 'Workspace is empty.'; return m.slice(0, 400).join('\n') + (m.length > 400 ? `\n... ${m.length - 400} more` : ''); } },
+  read_file: { ro: 1, desc: 'Read a text file with line numbers. Use offset/limit for large files.', params: { path: { type: 'string' }, offset: { type: 'integer', description: 'First line (1-based)' }, limit: { type: 'integer', description: 'Max lines, default 2000' } }, req: ['path'],
+    run: async ({ path, offset = 1, limit = 2000 }) => { const p = normPath(path); const t = await S.fs.read(p); if (t.includes('\u0000')) return 'Binary file, cannot display.'; const ls = t.split('\n'); const s = Math.max(1, +offset || 1) - 1; const sl = ls.slice(s, s + (+limit || 2000)); let out = sl.map((l, i) => String(s + i + 1).padStart(5) + '| ' + l).join('\n'); if (out.length > 60000) out = out.slice(0, 60000) + '\n... truncated'; if (s + sl.length < ls.length) out += `\n... ${ls.length - s - sl.length} more lines (use offset)`; return out || '(empty file)'; } },
+  write_file: { ask: 1, edit: 1, desc: 'Create a file or fully overwrite it. Parent folders are created automatically.', params: { path: { type: 'string' }, content: { type: 'string' } }, req: ['path', 'content'],
+    run: async ({ path, content }) => { const p = normPath(path); await S.fs.write(p, String(content ?? '')); fsChanged(p); return `Wrote ${p} (${String(content ?? '').split('\n').length} lines)`; } },
+  edit_file: { ask: 1, edit: 1, desc: 'Replace exact text in a file. old_string must match exactly once unless replace_all is true. Read the file first.', params: { path: { type: 'string' }, old_string: { type: 'string' }, new_string: { type: 'string' }, replace_all: { type: 'boolean' } }, req: ['path', 'old_string', 'new_string'],
+    run: async ({ path, old_string, new_string, replace_all = false }) => { const p = normPath(path); const t = await S.fs.read(p); if (old_string == null || old_string === '') throw new Error('old_string is required (use write_file to create files)'); const n = t.split(old_string).length - 1; if (!n) throw new Error('old_string not found. Re-read the file and copy the exact text including whitespace.'); if (n > 1 && !replace_all) throw new Error(`old_string matches ${n} places. Add more context or set replace_all=true.`); const out = replace_all ? t.split(old_string).join(new_string ?? '') : t.replace(old_string, () => new_string ?? ''); await S.fs.write(p, out); fsChanged(p); return `Edited ${p} (${replace_all ? n : 1} replacement${(replace_all ? n : 1) > 1 ? 's' : ''})`; } },
+  delete_file: { ask: 1, edit: 1, desc: 'Delete a file.', params: { path: { type: 'string' } }, req: ['path'],
+    run: async ({ path }) => { const p = normPath(path); await S.fs.del(p); fsChanged(p); return 'Deleted ' + p; } },
+  grep: { ro: 1, desc: 'Search file contents with a regular expression. Returns file:line: text.', params: { pattern: { type: 'string' }, path: { type: 'string', description: 'Optional directory prefix' }, ignore_case: { type: 'boolean' } }, req: ['pattern'],
+    run: async ({ pattern, path = '', ignore_case = true }) => { let re; try { re = new RegExp(pattern, ignore_case ? 'i' : ''); } catch (e) { throw new Error('Bad regex: ' + e.message); } const p = normPath(path); const pref = p ? p + '/' : ''; const files = (await S.fs.list()).filter(f => !p || f === p || f.startsWith(pref)); const out = []; for (const f of files) { if (out.length >= 100) break; let t; try { t = await S.fs.read(f); } catch { continue; } if (t.length > 500000 || t.includes('\u0000')) continue; t.split('\n').forEach((l, i) => { if (out.length < 100 && re.test(l)) out.push(`${f}:${i + 1}: ${l.trim().slice(0, 200)}`); }); } return out.join('\n') || 'No matches.'; } },
+  run_js: { ask: 1, desc: 'Run JavaScript in an isolated worker (no DOM, no workspace access, 10s limit). console.log output and the returned value are reported. Use it to test pure logic.', params: { code: { type: 'string' } }, req: ['code'],
+    run: async ({ code }) => runJS(code) },
+  todo_write: { ro: 1, desc: 'Replace the todo list. Each item has content and status (pending, in_progress, completed). Keep it updated while working.', params: { todos: { type: 'array', items: { type: 'object', properties: { content: { type: 'string' }, status: { type: 'string', enum: ['pending', 'in_progress', 'completed'] } }, required: ['content', 'status'] } } }, req: ['todos'],
+    run: async ({ todos }, c) => { if (!Array.isArray(todos)) throw new Error('todos must be an array'); c.session.todos = todos.map(t => ({ content: String(t.content ?? ''), status: ['pending', 'in_progress', 'completed'].includes(t.status) ? t.status : 'pending' })); saveSessions(); renderTodos(); return 'Todos updated.'; } },
+  task: { ro: 1, desc: '', params: {}, req: ['agent', 'prompt'],
+    run: async ({ agent, prompt }, c) => { const ag = subagents().find(a => a.id === agent || a.name === agent); if (!ag) throw new Error('Unknown subagent "' + agent + '". Available: ' + subagents().map(a => a.name).join(', ')); const msgs = [{ role: 'user', content: String(prompt ?? '') }]; const out = await runAgent({ agent: ag, messages: msgs, container: c.container, signal: c.signal, depth: c.depth + 1, session: c.session }); return out || '(subagent returned no text)'; } },
+};
+const subagents = () => S.agents.filter(a => a.mode === 'subagent');
+function schema(n) {
+  const t = TOOLS[n];
+  if (n === 'task') {
+    const sa = subagents();
+    return { type: 'function', function: { name: 'task', description: 'Delegate a self-contained job to a subagent that works independently and returns a final report. Subagents: ' + sa.map(a => `${a.name} (${a.desc || 'no description'})`).join('; '), parameters: { type: 'object', properties: { agent: { type: 'string', enum: sa.map(a => a.name) }, prompt: { type: 'string', description: 'Complete instructions. The subagent has no memory of this chat.' } }, required: ['agent', 'prompt'] } } };
+  }
+  return { type: 'function', function: { name: n, description: t.desc, parameters: { type: 'object', properties: t.params, required: t.req || [] } } };
+}
+const toolNames = () => Object.keys(TOOLS);
+function toolsFor(agent, depth) {
+  return (agent.tools || []).filter(n => TOOLS[n] && !(n === 'task' && (depth > 0 || !subagents().length))).map(n => ({ name: n, schema: schema(n) }));
+}
+
+/* ============================ agents ============================ */
+const BUILTIN = [
+  { id: 'build', name: 'build', mode: 'primary', builtin: true, desc: 'Full-access coding agent', tools: ['list_files', 'read_file', 'write_file', 'edit_file', 'delete_file', 'grep', 'run_js', 'todo_write', 'task'],
+    prompt: `You are "build", an autonomous software engineering agent working inside a browser-based coding workspace (like opencode). You complete the user's coding tasks by reading, creating and editing files with your tools.
+
+Rules:
+- Explore before changing: use list_files, grep and read_file. Never guess file contents.
+- Prefer edit_file for small changes and write_file for new files or full rewrites. Always keep code complete and working, never leave placeholders.
+- When it helps, verify logic with run_js (pure JavaScript only; it cannot touch the DOM or workspace files).
+- For multi-step work, plan with todo_write and update it as you progress.
+- Delegate broad searches to the "explore" subagent and independent chunks of work to "general" using the task tool.
+- Call tools through the tool-calling interface, do not write tool calls as text.
+- Be concise. When finished, summarize what you changed in a few lines. Do not paste whole files into chat after writing them.` },
+  { id: 'plan', name: 'plan', mode: 'primary', builtin: true, desc: 'Read-only planning agent', tools: ['list_files', 'read_file', 'grep', 'todo_write', 'task'],
+    prompt: `You are "plan", a read-only software architect. You cannot modify files. Investigate the workspace with your tools, then produce a clear, ordered implementation plan with the files to change and the reasoning behind decisions. Ask clarifying questions when requirements are ambiguous. Record the final plan with todo_write so the build agent can execute it. Be concise.` },
+  { id: 'explore', name: 'explore', mode: 'subagent', builtin: true, desc: 'Fast read-only codebase explorer', tools: ['list_files', 'read_file', 'grep'], temperature: 0.1,
+    prompt: `You are "explore", a fast read-only codebase search subagent. Find what the request asks for using list_files, grep and read_file, then reply with a concise report: relevant file paths with line numbers and a short explanation. Do not speculate beyond what you read.` },
+  { id: 'general', name: 'general', mode: 'subagent', builtin: true, desc: 'General-purpose worker for delegated tasks', tools: ['list_files', 'read_file', 'write_file', 'edit_file', 'delete_file', 'grep', 'run_js', 'todo_write'],
+    prompt: `You are "general", a subagent that carries out a delegated task completely and independently. Use your tools to do the work, verify it, then reply with a short report of what you did and any file paths changed. You have no memory of the parent conversation; rely only on the instructions you were given.` },
+];
+function rebuildAgents() { S.agents = [...BUILTIN, ...store.get('agents', [])]; if (!S.agents.some(a => a.id === S.agentId && a.mode === 'primary')) S.agentId = 'build'; }
+const primaries = () => S.agents.filter(a => a.mode === 'primary');
+const curAgent = () => S.agents.find(a => a.id === S.agentId) || S.agents[0];
+function setAgent(id) { S.agentId = id; store.set('agent', id); paintPills(); updateStatus(); }
+function paintPills() {
+  const p = $('#pills'); p.innerHTML = '';
+  primaries().forEach(a => p.append(h('span', { class: 'pill' + (a.id === S.agentId ? ' on' : ''), title: a.desc, onclick: () => setAgent(a.id) }, a.name)));
+  p.append(h('span', { class: 'dim small' }, 'subagents: ' + (subagents().map(a => a.name).join(', ') || 'none')));
+}
+rebuildAgents();
+
+/* ============================ chat UI ============================ */
+const chat = $('#chat');
+const nearBottom = () => chat.scrollHeight - chat.scrollTop - chat.clientHeight < 140;
+let stick = true; chat.addEventListener('scroll', () => { stick = nearBottom(); });
+const scrollDown = force => { if (force || stick) chat.scrollTop = chat.scrollHeight; };
+
+function makeToolCard(call) {
+  const name = call.function.name; let args = parseArgs(call.function.arguments);
+  const status = h('span', { class: 'st pending' }), title = h('span', { class: 'tt' });
+  const argsEl = h('div'), body = h('div', { class: 'sub' }), res = h('pre', { class: 'tres', hidden: true }), perm = h('div', { class: 'perm' });
+  const el = h('div', { class: 'tool' }, h('div', { class: 'th', onclick: () => el.classList.toggle('open') }, status, h('b', {}, name), title), h('div', { class: 'tb' }, argsEl, perm, body, res));
+  const card = {
+    el, body,
+    setArgs(a) { args = a; title.textContent = summary(name, a); argsEl.innerHTML = argPreview(name, a); },
+    setStatus(s) { status.className = 'st ' + s; },
+    setResult(t) { t = String(t ?? ''); res.textContent = t.length > 4000 ? t.slice(0, 4000) + `\n... (${t.length - 4000} more chars)` : t; res.hidden = !t; },
+    open(v = true) { el.classList.toggle('open', v); },
+    ask(signal) {
+      return new Promise(resolve => {
+        const done = v => { perm.innerHTML = ''; resolve(v); };
+        el.classList.add('open');
+        const edit = TOOLS[name].edit;
+        perm.append(h('span', {}, 'Allow this action?'),
+          h('button', { class: 'btn ok sm', onclick: () => done(true) }, 'Allow'),
+          h('button', { class: 'btn sm', title: edit ? 'Auto-accept file edits from now on' : 'Auto-accept everything from now on', onclick: () => { S.settings.perm = edit ? 'edits' : 'auto'; saveSettings(); $('#perm').value = S.settings.perm; done(true); } }, 'Always'),
+          h('button', { class: 'btn danger sm', onclick: () => done(false) }, 'Deny'));
+        signal?.addEventListener('abort', () => done(false), { once: true });
+      });
+    },
+  };
+  card.setArgs(args);
+  return card;
+}
+function makeBlock(parent, who) {
+  const el = h('div', { class: 'msg asst live' });
+  const thinkPre = h('pre', { class: 'thinkpre' });
+  const think = h('details', { class: 'think', hidden: true }, h('summary', {}, 'Thinking'), thinkPre);
+  const text = h('div', { class: 'md' }), tools = h('div', { class: 'tools' });
+  el.append(h('div', { class: 'who' }, who), think, text, tools); parent.append(el);
+  let raf = 0, tv = '', closed = false;
+  const paint = () => { raf = 0; text.innerHTML = md(tv); scrollDown(); };
+  return {
+    el,
+    setThinking(t) { think.hidden = !t; thinkPre.textContent = t; if (t && !tv) think.open = true; scrollDown(); },
+    setText(t, now) { tv = t; if (t && !closed) { think.open = false; closed = true; } if (now) { cancelAnimationFrame(raf); paint(); } else if (!raf) raf = requestAnimationFrame(paint); },
+    addTool(call) { const c = makeToolCard(call); tools.append(c.el); scrollDown(); return c; },
+    finish() { el.classList.remove('live'); if (!tv && !thinkPre.textContent && !tools.children.length) el.remove(); },
+  };
+}
+function renderUser(m) {
+  const el = h('div', { class: 'msg user' }, m.content);
+  if (m.images) m.images.forEach(b => el.append(h('img', { src: 'data:image/png;base64,' + b })));
+  else if (m._n) el.append(h('div', { class: 'dim small' }, `[${m._n} image${m._n > 1 ? 's' : ''} attached]`));
+  chat.append(el); scrollDown(true);
+}
+function emptyState() {
+  const sg = ['Build a snake game in index.html with a neon style', 'Create a todo app with localStorage in a single HTML file', 'Explain the files in this workspace', 'Write a JS module with unit-style tests using run_js'];
+  return h('div', { class: 'empty' }, h('h2', {}, 'What are we building?'), h('div', { class: 'dim' }, 'The agent can read, write and edit files in the workspace. Switch agents with Tab.'),
+    h('div', { class: 'sugg' }, sg.map(s => h('button', { class: 'btn', onclick: () => { $('#inp').value = s; $('#inp').focus(); } }, s))));
+}
+function renderSession() {
+  chat.innerHTML = ''; const s = cur();
+  if (!s.messages.length) chat.append(emptyState());
+  const ms = s.messages;
+  for (let i = 0; i < ms.length; i++) {
+    const m = ms[i];
+    if (m.role === 'user') renderUser(m);
+    else if (m.role === 'assistant') {
+      const b = makeBlock(chat, m._agent || 'assistant');
+      if (m.thinking) b.setThinking(m.thinking);
+      b.setText(m.content || '', true);
+      for (const call of m.tool_calls || []) {
+        const c = b.addTool(call); const t = ms[i + 1];
+        if (t && t.role === 'tool') { i++; c.setResult(t.content); c.setStatus(/^(Error|Denied|Interrupted)/.test(t.content) ? 'err' : 'ok'); }
+      }
+      b.finish();
+    }
+  }
+  renderTodos(); stick = true; scrollDown(true);
+  $('#title').textContent = s.title;
+}
+function renderTodos() {
+  const el = $('#p-todos'); el.innerHTML = ''; const t = cur()?.todos || [];
+  if (!t.length) return el.append(h('div', { class: 'dim', style: 'padding:14px' }, 'No todos. Agents create them for multi-step work.'));
+  t.forEach(x => el.append(h('div', { class: 'todo ' + x.status }, x.status === 'completed' ? '●' : x.status === 'in_progress' ? '◐' : '○', x.content)));
+}
+const showErr = t => { chat.append(h('div', { class: 'errline' }, t)); scrollDown(true); };
+const showNote = t => { chat.append(h('div', { class: 'note' }, t)); scrollDown(true); };
+
+/* ============================ agent loop ============================ */
+const wire = m => { const o = { role: m.role, content: m.content ?? '' }; if (m.images) o.images = m.images; if (m.tool_calls) o.tool_calls = m.tool_calls; if (m.thinking && m.tool_calls) o.thinking = m.thinking; if (m.tool_name) o.tool_name = m.tool_name; return o; };
+async function buildSystem(agent) {
+  let tree = ''; try { const f = await S.fs.list(); tree = f.slice(0, 150).join('\n') + (f.length > 150 ? `\n... ${f.length - 150} more` : ''); } catch {}
+  let rules = ''; try { rules = (await S.fs.read('AGENTS.md')).slice(0, 4000); } catch {}
+  return `${agent.prompt}\n\n# Environment\nWorkspace: ${S.fs.label}\nDate: ${new Date().toDateString()}\nAll paths are relative to the workspace root and use "/" separators.\n\n# Workspace files\n${tree || '(empty)'}${rules ? `\n\n# Project rules (AGENTS.md)\n${rules}` : ''}`;
+}
+function noteStats(st, depth) {
+  if (depth) return;
+  S.stats = { used: (st.prompt_eval_count || 0) + (st.eval_count || 0), tps: st.eval_count && st.eval_duration ? st.eval_count / st.eval_duration * 1e9 : 0 };
+  updateStatus();
+}
+async function execTool(call, card, ctx) {
+  const name = call.function.name, args = parseArgs(call.function.arguments); card.setArgs(args);
+  const t = TOOLS[name];
+  if (!t || !ctx.allowed.includes(name)) { card.setStatus('err'); const r = `Error: unknown tool "${name}". Available: ${ctx.allowed.join(', ') || 'none'}`; card.setResult(r); return r; }
+  if (t.ask && !(S.settings.perm === 'auto' || (S.settings.perm === 'edits' && t.edit))) {
+    card.setStatus('pending'); const ok = await card.ask(ctx.signal);
+    if (ctx.signal.aborted) throw new DOMException('Aborted', 'AbortError');
+    if (!ok) { card.setStatus('err'); const r = 'Denied by user.'; card.setResult(r); return r; }
+  }
+  card.setStatus('running'); if (name === 'task') card.open();
+  try { const r = String(await t.run(args, { signal: ctx.signal, container: card.body, session: ctx.session, depth: ctx.depth })); card.setStatus('ok'); card.setResult(r); return r; }
+  catch (e) { if (e.name === 'AbortError' || ctx.signal.aborted) throw e; card.setStatus('err'); const r = 'Error: ' + e.message; card.setResult(r); return r; }
+}
+async function runAgent({ agent, messages, container, signal, depth = 0, session }) {
+  const model = (agent.model && S.models.some(m => m.name === agent.model)) ? agent.model : S.model;
+  const caps = modelCaps(model);
+  const defs = (caps.length && !caps.includes('tools')) ? [] : toolsFor(agent, depth);
+  const allowed = defs.map(d => d.name);
+  const system = await buildSystem(agent);
+  let final = '';
+  for (let step = 0; step < S.settings.maxSteps; step++) {
+    const block = makeBlock(container, agent.name + (depth ? ' · subagent' : ''));
+    const body = { model, stream: true, messages: [{ role: 'system', content: system }, ...messages.map(wire)], options: { temperature: agent.temperature ?? S.settings.temperature, num_ctx: S.settings.num_ctx } };
+    if (defs.length) body.tools = defs.map(d => d.schema);
+    if (caps.includes('thinking') && S.settings.think !== 'auto') body.think = S.settings.think === 'on';
+    let content = '', thinking = '', stats = null; const pairs = [];
+    try {
+      const resp = await api('/api/chat', body, signal);
+      for await (const ch of ndjson(resp)) {
+        if (ch.error) throw new Error(ch.error);
+        const m = ch.message || {};
+        if (m.thinking) { thinking += m.thinking; block.setThinking(thinking); }
+        if (m.content) { content += m.content; block.setText(content); }
+        for (const tc of m.tool_calls || []) pairs.push({ call: tc, card: block.addTool(tc) });
+        if (ch.done) stats = ch;
+      }
+    } catch (e) {
+      if (content) messages.push({ role: 'assistant', content, _agent: agent.name });
+      block.setText(content, true); block.finish(); throw e;
+    }
+    block.setText(content, true);
+    if (stats) noteStats(stats, depth);
+    const msg = { role: 'assistant', content, _agent: agent.name };
+    if (thinking) msg.thinking = thinking;
+    if (pairs.length) msg.tool_calls = pairs.map(p => p.call);
+    messages.push(msg);
+    if (!pairs.length) { block.finish(); if (!depth) saveSessions(); return content; }
+    final = content;
+    let k = 0;
+    try {
+      for (; k < pairs.length; k++) {
+        const { call, card } = pairs[k];
+        const out = await execTool(call, card, { signal, session, depth, allowed });
+        messages.push({ role: 'tool', tool_name: call.function.name, content: out });
+      }
+    } catch (e) {
+      for (; k < pairs.length; k++) messages.push({ role: 'tool', tool_name: pairs[k].call.function.name, content: 'Interrupted by user.' });
+      block.finish(); throw e;
+    }
+    block.finish(); if (!depth) saveSessions();
+  }
+  const n = `Stopped after ${S.settings.maxSteps} steps (adjust in Settings).`;
+  container.append(h('div', { class: 'note' }, n)); return final || n;
+}
+
+/* ============================ sessions ============================ */
+const mkSession = () => ({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5), title: 'New session', created: Date.now(), messages: [], todos: [] });
+const cur = () => S.sessions.find(s => s.id === S.sid);
+function saveSessions() {
+  const slim = S.sessions.slice(0, 50).map(s => ({ ...s, messages: s.messages.map(m => { if (!m.images) return m; const { images, ...r } = m; return r; }) }));
+  store.set('sessions', slim); store.set('sid', S.sid);
+}
+function paintSessions() {
+  const el = $('#sess'); el.innerHTML = '';
+  S.sessions.forEach(s => el.append(h('div', { class: 'si' + (s.id === S.sid ? ' on' : ''), onclick: () => { if (S.busy) return toast('Wait for the agent or press Stop'); S.sid = s.id; saveSessions(); renderSession(); paintSessions(); } },
+    h('span', {}, s.title), h('b', { title: 'Delete', onclick: ev => { ev.stopPropagation(); if (S.busy) return; S.sessions = S.sessions.filter(x => x.id !== s.id); if (!S.sessions.length) S.sessions.push(mkSession()); if (!cur()) S.sid = S.sessions[0].id; saveSessions(); renderSession(); paintSessions(); } }, '×'))));
+}
+function newSession() {
+  if (S.busy) return toast('Wait for the agent or press Stop');
+  const s = mkSession(); S.sessions.unshift(s); S.sid = s.id; saveSessions(); renderSession(); paintSessions(); $('#inp').focus();
+}
+$('#b-new').addEventListener('click', newSession);
+
+/* ============================ composer ============================ */
+const pending = [];
+function paintAtts() {
+  const a = $('#atts'); a.innerHTML = '';
+  pending.forEach((p, i) => a.append(h('div', {}, h('img', { src: 'data:image/png;base64,' + p }), h('button', { onclick: () => { pending.splice(i, 1); paintAtts(); } }, '×'))));
+}
+const fileB64 = f => new Promise(r => { const fr = new FileReader(); fr.onload = () => r(String(fr.result).split(',')[1]); fr.readAsDataURL(f); });
+async function addImages(files) {
+  if (!modelCaps().includes('vision')) return toast('The selected model has no vision capability');
+  for (const f of files) if (f.type.startsWith('image/')) pending.push(await fileB64(f));
+  paintAtts();
+}
+$('#b-att').addEventListener('click', () => $('#f-img').click());
+$('#f-img').addEventListener('change', e => { addImages([...e.target.files]); e.target.value = ''; });
+$('#inp').addEventListener('paste', e => { const f = [...(e.clipboardData?.files || [])]; if (f.length) { e.preventDefault(); addImages(f); } });
+$('#inp').addEventListener('input', e => { e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 200) + 'px'; });
+$('#inp').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
+  else if (e.key === 'Tab' && !e.shiftKey) { e.preventDefault(); const ps = primaries(); const i = ps.findIndex(a => a.id === S.agentId); setAgent(ps[(i + 1) % ps.length].id); }
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && S.busy) S.abort?.abort(); });
+$('#b-send').addEventListener('click', send);
+$('#b-stop').addEventListener('click', () => S.abort?.abort());
+function setBusy(b) { S.busy = b; $('#b-send').hidden = b; $('#b-stop').hidden = !b; $('#inp').disabled = false; updateStatus(); }
+async function command(t) {
+  const [c, ...r] = t.slice(1).split(/\s+/); const arg = r.join(' ');
+  if (c === 'new' || c === 'clear') newSession();
+  else if (c === 'model' || c === 'models') showModels();
+  else if (c === 'agents') openAgents();
+  else if (c === 'settings') openSettings();
+  else if (c === 'agent') { const a = primaries().find(x => x.name === arg); a ? setAgent(a.id) : toast('Primary agents: ' + primaries().map(x => x.name).join(', ')); }
+  else toast('Commands: /new /model /agent <name> /agents /settings');
+}
+async function send() {
+  const inp = $('#inp'); const text = inp.value.trim();
+  if (S.busy || (!text && !pending.length)) return;
+  if (text.startsWith('/')) { inp.value = ''; inp.style.height = 'auto'; return command(text); }
+  if (!S.model) return showModels();
+  const s = cur(); const um = { role: 'user', content: text };
+  if (pending.length) { um.images = pending.splice(0); um._n = um.images.length; paintAtts(); }
+  inp.value = ''; inp.style.height = 'auto';
+  if (!s.messages.length) chat.innerHTML = '';
+  s.messages.push(um); renderUser(um);
+  if (s.title === 'New session') { s.title = (text || 'Image').slice(0, 48); $('#title').textContent = s.title; paintSessions(); }
+  S.abort = new AbortController(); stick = true; setBusy(true);
+  try { await runAgent({ agent: curAgent(), messages: s.messages, container: chat, signal: S.abort.signal, session: s }); }
+  catch (e) { if (e.name === 'AbortError') showNote('Interrupted'); else showErr(e.message); }
+  finally { S.abort = null; setBusy(false); saveSessions(); refreshFiles(); }
+}
+
+/* ============================ top bar / status ============================ */
+function updateTop() {
+  const m = S.models.find(x => x.name === S.model);
+  const mc = $('#mchip'); mc.innerHTML = '';
+  mc.append(h('b', {}, S.model || 'Select model'), ...(m?.caps || []).filter(c => c !== 'completion').map(capTag));
+  $('#perm').value = S.settings.perm; $('#b-att').hidden = !modelCaps().includes('vision');
+  updateStatus();
+}
+function updateStatus() {
+  const caps = modelCaps(); const noTools = S.models.length && caps.length && !caps.includes('tools');
+  $('#st-l').innerHTML = `<b>${esc(curAgent().name)}</b> · ${esc(S.model || 'no model')}` + (noTools ? ' <span class="warn">· model has no tools support</span>' : '') + (S.busy ? ' · working... (Esc to stop)' : '');
+  const st = S.stats;
+  $('#st-r').innerHTML = st ? `${st.tps ? st.tps.toFixed(1) + ' tok/s · ' : ''}<span class="${st.used / S.settings.num_ctx > .8 ? 'warn' : ''}">ctx ${st.used}/${S.settings.num_ctx}</span>` : `ctx limit ${S.settings.num_ctx}`;
+}
+$('#mchip').addEventListener('click', showModels);
+$('#b-models').addEventListener('click', showModels);
+$('#perm').addEventListener('change', e => { S.settings.perm = e.target.value; saveSettings(); });
+$('#t-left').addEventListener('click', () => $('#left').classList.toggle('open'));
+$('#t-right').addEventListener('click', () => $('#right').classList.toggle('open'));
+$('#chat').addEventListener('click', () => { $('#left').classList.remove('open'); });
+
+/* ============================ modals ============================ */
+function modal(content) {
+  const m = h('div', { class: 'modal', onclick: e => { if (e.target === m) m.remove(); } }, h('div', { class: 'mbox' }, content));
+  document.body.append(m); return m;
+}
+function openSettings() {
+  const s = S.settings;
+  const f = (label, el) => h('label', { class: 'fld' }, label, el);
+  const temp = h('input', { type: 'number', step: '0.1', min: '0', max: '2', value: s.temperature });
+  const ctx = h('input', { type: 'number', step: '1024', min: '2048', value: s.num_ctx });
+  const steps = h('input', { type: 'number', min: '1', max: '100', value: s.maxSteps });
+  const think = h('select', {}, ['auto', 'on', 'off'].map(v => h('option', { value: v, selected: v === s.think }, v)));
+  const perm = h('select', {}, [['ask', 'Ask before changes'], ['edits', 'Auto-accept edits'], ['auto', 'Auto-accept all']].map(([v, t]) => h('option', { value: v, selected: v === s.perm }, t)));
+  const m = modal([h('h3', {}, 'Settings'),
+    h('div', { class: 'row2' }, f('Temperature', temp), f('Context window (num_ctx)', ctx)),
+    h('div', { class: 'row2' }, f('Max agent steps per run', steps), f('Thinking (thinking-capable models)', think)),
+    f('Permissions', perm),
+    h('div', { class: 'dim small' }, 'Larger num_ctx uses more memory but helps agents that read many files. Agents can override temperature and model in the Agents editor.'),
+    h('div', { style: 'display:flex;gap:8px;justify-content:flex-end' }, h('button', { class: 'btn', onclick: () => m.remove() }, 'Cancel'),
+      h('button', { class: 'btn primary', onclick: () => { Object.assign(S.settings, { temperature: +temp.value, num_ctx: +ctx.value || 16384, maxSteps: +steps.value || 25, think: think.value, perm: perm.value }); saveSettings(); updateTop(); m.remove(); } }, 'Save'))]);
+}
+$('#b-set').addEventListener('click', openSettings);
+function openAgents() {
+  const m = modal([]); const box = m.firstChild;
+  const list = () => {
+    box.innerHTML = '';
+    box.append(h('h3', {}, 'Agents'), h('div', { class: 'dim small' }, 'Primary agents are the ones you chat with (Tab switches). Subagents are delegated to by primary agents through the task tool.'));
+    S.agents.forEach(a => box.append(h('div', { class: 'arow' }, h('div', {}, h('b', {}, a.name), ' ', h('span', { class: 'tag unk' }, a.mode), a.builtin ? h('span', { class: 'tag unk' }, 'built-in') : null, h('div', { class: 'dim small' }, (a.desc || '') + ' · tools: ' + (a.tools || []).join(', '))),
+      h('button', { class: 'btn sm', onclick: () => form(a.builtin ? { ...a, id: '', name: a.name + '-copy', builtin: false } : a) }, a.builtin ? 'Duplicate' : 'Edit'))));
+    box.append(h('div', { style: 'display:flex;gap:8px;justify-content:space-between' }, h('button', { class: 'btn', onclick: () => form(null) }, '+ New agent'), h('button', { class: 'btn', onclick: () => m.remove() }, 'Close')));
+  };
+  const form = a => {
+    const isNew = !a || !a.id; a = a || { mode: 'primary', tools: ['list_files', 'read_file', 'grep'], prompt: '' };
+    const name = h('input', { value: a.name || '', placeholder: 'e.g. reviewer' }), desc = h('input', { value: a.desc || '', placeholder: 'One-line description (shown to the model for subagents)' });
+    const mode = h('select', {}, ['primary', 'subagent'].map(v => h('option', { value: v, selected: v === a.mode }, v)));
+    const model = h('select', {}, [h('option', { value: '' }, '(use selected model)'), ...S.models.map(x => h('option', { value: x.name, selected: x.name === a.model }, x.name + ((x.caps || []).includes('tools') ? '' : '  [no tools]')))]);
+    const temp = h('input', { type: 'number', step: '0.1', min: '0', max: '2', value: a.temperature ?? '', placeholder: 'default' });
+    const checks = toolNames().map(n => h('label', {}, h('input', { type: 'checkbox', value: n, checked: (a.tools || []).includes(n) }), n));
+    const prompt = h('textarea', { rows: 9, placeholder: 'System prompt: who the agent is, how it should work, how it should report.' }); prompt.value = a.prompt || '';
+    box.innerHTML = '';
+    box.append(h('h3', {}, isNew ? 'New agent' : 'Edit ' + a.name),
+      h('div', { class: 'row2' }, h('label', { class: 'fld' }, 'Name', name), h('label', { class: 'fld' }, 'Mode', mode)),
+      h('label', { class: 'fld' }, 'Description', desc),
+      h('div', { class: 'row2' }, h('label', { class: 'fld' }, 'Model', model), h('label', { class: 'fld' }, 'Temperature', temp)),
+      h('div', { class: 'fld' }, 'Tools', h('div', { class: 'checks' }, checks)),
+      h('label', { class: 'fld' }, 'System prompt', prompt),
+      h('div', { style: 'display:flex;gap:8px;justify-content:space-between' },
+        h('div', {}, !isNew ? h('button', { class: 'btn danger', onclick: () => { store.set('agents', store.get('agents', []).filter(x => x.id !== a.id)); rebuildAgents(); paintPills(); list(); } }, 'Delete') : null),
+        h('div', { style: 'display:flex;gap:8px' }, h('button', { class: 'btn', onclick: list }, 'Back'),
+          h('button', { class: 'btn primary', onclick: () => {
+            const nm = name.value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-|-$/g, ''); if (!nm) return toast('Name required');
+            const all = store.get('agents', []); const id = isNew ? nm : a.id;
+            if ((isNew && (BUILTIN.some(b => b.id === id) || all.some(x => x.id === id)))) return toast('An agent with that name exists');
+            const obj = { id, name: nm, mode: mode.value, desc: desc.value.trim(), model: model.value || undefined, temperature: temp.value === '' ? undefined : +temp.value, tools: checks.filter(c => c.firstChild.checked).map(c => c.firstChild.value), prompt: prompt.value };
+            store.set('agents', [...all.filter(x => x.id !== id), obj]); rebuildAgents(); paintPills(); updateStatus(); list();
+          } }, 'Save'))));
+  };
+  list();
+}
+$('#b-agents').addEventListener('click', openAgents);
+
+/* ============================ boot ============================ */
+function enterWorkspace() {
+  S.started = true;
+  if (!S.sessions.length) S.sessions.push(mkSession());
+  if (!cur()) S.sid = S.sessions[0].id;
+  view('ws'); $('#srv').textContent = base();
+  paintPills(); paintSessions(); renderSession(); updateTop(); refreshFiles();
+  $('#inp').focus();
+}
+view('connect');
+</script>
+</body>
+</html>
