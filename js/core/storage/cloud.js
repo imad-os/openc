@@ -36,7 +36,7 @@ export async function loadFirebase(config) {
 export const CONN_FIELDS = ['url', 'key', 'label', 'created', 'lastUsed', 'lastModel', 'proxy', 'proxyUrl'];
 export const MODEL_FIELDS = ['url', 'model', 'rating', 'fav', 'note', 'lastUsed', 'updated', 'runs', 'requests', 'evalTokens', 'evalNs', 'promptTokens', 'toolCalls', 'toolErrors'];
 export const AGENT_FIELDS = ['name', 'mode', 'desc', 'model', 'temperature', 'tools', 'prompt', 'updated'];
-export const SESSION_FIELDS = ['title', 'created', 'updated', 'url', 'model', 'agent', 'todos', 'summary', 'summaryUpto', 'count'];
+export const SESSION_FIELDS = ['title', 'created', 'updated', 'url', 'model', 'agent', 'todos', 'summary', 'summaryUpto', 'count', 'files'];
 
 const clean = o => JSON.parse(JSON.stringify(o ?? null));
 const pick = (o, keys) => Object.fromEntries(keys.filter(k => o?.[k] !== undefined).map(k => [k, o[k]]));

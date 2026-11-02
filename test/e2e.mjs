@@ -10,7 +10,7 @@ const ok = (cond, msg) => { if (!cond) throw new Error('FAIL: ' + msg); console.
 const browser = await chromium.launch();
 const ctx = await browser.newContext();
 // Force local mode (no Firebase network in tests) via an invalid-but-empty override path.
-await ctx.addInitScript(() => { window.__TEST__ = true; try { if (!localStorage.getItem('oc2.settings')) localStorage.setItem('oc2.settings', JSON.stringify({ idleTimeout: 3 })); } catch { /* sandboxed frames */ } });
+await ctx.addInitScript(() => { window.__TEST__ = true; try { if (!localStorage.getItem('oc2.settings')) localStorage.setItem('oc2.settings', JSON.stringify({ idleTimeout: 3, defaultFiles: 'shared' })); } catch { /* sandboxed frames */ } });
 const page = await ctx.newPage();
 page.on('pageerror', e => errors.push('pageerror: ' + e.message));
 page.on('console', m => { if (m.type() === 'error' && !/firebase|gstatic|Failed to load resource/i.test(m.text())) errors.push('console: ' + m.text()); });
@@ -246,6 +246,44 @@ await page.evaluate(() => { const c = document.querySelector('#chat'); c.scrollT
 await page.mouse.wheel(0, 200); await page.waitForTimeout(800);
 ok(await gap() < 30, 'scrolling back to the bottom resumes following');
 await page.waitForSelector('#chat .runfoot', { timeout: 30000 });
+
+// per-conversation files
+await page.click('#b-new');
+await page.click('#fs-scope button:has-text("This chat")');
+ok((await page.textContent('#fs-label')).includes("This conversation's files"), 'conversation switched to its own private files');
+await page.waitForFunction(() => document.querySelector('#tree').textContent.includes('No files yet'), null, { timeout: 5000 });
+ok(true, 'private files start empty (shared files not visible)');
+await page.setInputFiles('#f-in', { name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('private notes') });
+await page.waitForSelector('.fi:has-text("notes.txt")');
+ok(true, 'uploaded a file into this conversation');
+await page.fill('#inp', 'write a big file');
+await page.press('#inp', 'Enter');
+await page.waitForSelector('#chat .runfoot', { timeout: 30000 });
+await page.waitForSelector('.fi:has-text("big.txt")');
+ok(true, 'agent wrote big.txt into this conversation');
+const sharedNow = await page.evaluate(() => JSON.parse(localStorage.getItem('oc2.vfs') || '{}'));
+ok(!sharedNow['notes.txt'], 'shared workspace untouched by the private conversation');
+await page.click('.si:has-text("long story")');
+await page.waitForFunction(() => document.querySelector('#fs-label').textContent.includes('Browser workspace'));
+await page.waitForFunction(() => document.querySelector('#tree').textContent.includes('index.html'));
+ok(!(await page.textContent('#tree')).includes('notes.txt'), 'another conversation does not see those files');
+await page.click('.si:has-text("write a big file") >> nth=0');
+await page.waitForSelector('.fi:has-text("notes.txt")');
+ok(true, 'switching back shows the private files again');
+await page.reload();
+await page.waitForSelector('#v-auth:not([hidden]) #a-card:not([hidden]), #v-connect:not([hidden])', { timeout: 15000 });
+if (await page.isVisible('#a-local')) await page.click('#a-local');
+await page.waitForSelector('.conn-main'); await page.click('.conn-main');
+await page.waitForSelector('#v-ws:not([hidden])');
+await page.locator('.si', { hasText: 'write a big file' }).first().click();
+await page.waitForSelector('.fi:has-text("notes.txt")');
+ok(true, 'private files persist after reload (IndexedDB)');
+
+// hide / show the files panel
+await page.click('#t-files');
+ok(await page.isHidden('#right'), 'files panel hidden');
+await page.keyboard.press('Control+.');
+ok(await page.isVisible('#right'), 'Ctrl+. shows it again');
 
 // display settings
 await page.click('#b-display');

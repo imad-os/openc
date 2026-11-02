@@ -5,6 +5,7 @@ import { uid } from '../util/misc.js';
 import { threadView, showThread, dropThread, renderThread } from './chat.js';
 import { setAgent, updateTop, updateStatus } from './workspace.js';
 import { runs, isRunning } from './runs.js';
+import { refreshFiles, removeSessionFiles } from './files.js';
 
 export function initSessions() {
   $('#sess-q').addEventListener('input', paintSessions);
@@ -20,17 +21,20 @@ function display(s) {
   renderSession();
   paintSessions();
   emit('session', s);
+  refreshFiles();
 }
 
 export const draftSession = () => ({
   id: uid(), title: 'New session', created: Date.now(), updated: Date.now(),
   url: state.conn?.url || '', model: state.model || '', agent: state.agentId,
+  files: state.settings.defaultFiles === 'shared' ? 'shared' : 'session',
   todos: [], summary: '', summaryUpto: 0, messages: [], _synced: 0, _draft: true,
 });
 
 const metaOf = s => ({
   id: s.id, title: s.title, created: s.created, updated: s.updated, url: s.url || '', model: s.model || '', agent: s.agent || '',
   todos: s.todos || [], summary: s.summary || '', summaryUpto: s.summaryUpto || 0, count: s.messages.length,
+  files: s.files || 'shared',
 });
 
 /** Images are not synced (too large); keep a count instead. */
@@ -183,6 +187,7 @@ async function deleteSession(id) {
   if (isRunning(id)) return toast('Stop the agent in that conversation first');
   if (!(await confirmDialog('Delete this conversation? This cannot be undone.', 'Delete'))) return;
   try { await state.store.deleteSession(id); } catch (e) { return toast('Could not delete: ' + e.message); }
+  removeSessionFiles(id);
   state.sessions = state.sessions.filter(s => s.id !== id);
   if (state.session?.id === id) newSession(); else paintSessions();
 }

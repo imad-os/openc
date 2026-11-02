@@ -109,3 +109,58 @@ export class DirFS {
   }
   async move(from, to) { const c = await this.read(from); await this.write(to, c); await this.remove(from); }
 }
+
+/* ---------- per-conversation files (IndexedDB, one record per conversation) ---------- */
+const IDB_NAME = 'ollama-code', IDB_STORE = 'session-files';
+let dbPromise = null;
+function idb() {
+  return dbPromise ||= new Promise((resolve, reject) => {
+    const r = indexedDB.open(IDB_NAME, 1);
+    r.onupgradeneeded = () => r.result.createObjectStore(IDB_STORE);
+    r.onsuccess = () => resolve(r.result);
+    r.onerror = () => reject(r.error);
+  });
+}
+async function idbDo(mode, fn) {
+  const db = await idb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, mode);
+    const req = fn(tx.objectStore(IDB_STORE));
+    tx.oncomplete = () => resolve(req?.result);
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+}
+
+/** Files that belong to one conversation only. Stored in this browser (IndexedDB). */
+export class SessionFS {
+  constructor(sessionId) {
+    this.id = sessionId;
+    this.virtual = true;
+    this.perSession = true;
+    this.label = "This conversation's files (private to this chat)";
+    this.files = null;
+    this.loading = null;
+  }
+  async load() {
+    if (this.files) return this.files;
+    this.loading ||= idbDo('readonly', s => s.get(this.id)).then(v => (this.files = v || {})).catch(() => (this.files = {}));
+    return this.loading;
+  }
+  async persist() {
+    try { await idbDo('readwrite', s => s.put(this.files, this.id)); }
+    catch (e) { throw new Error('Could not save conversation files in this browser: ' + (e?.message || e)); }
+  }
+  async list() { return Object.keys(await this.load()).sort(); }
+  async exists(p) { return Object.prototype.hasOwnProperty.call(await this.load(), p); }
+  async read(p) { if (!(await this.exists(p))) throw new Error('File not found: ' + p); return this.files[p]; }
+  async readBytes(p) { return new TextEncoder().encode(await this.read(p)); }
+  async size(p) { return new Blob([await this.read(p)]).size; }
+  async write(p, content) { if (!p) throw new Error('Empty path'); await this.load(); this.files[p] = String(content); await this.persist(); }
+  async remove(p) { if (!(await this.exists(p))) throw new Error('File not found: ' + p); delete this.files[p]; await this.persist(); }
+  async move(from, to) { const c = await this.read(from); this.files[to] = c; delete this.files[from]; await this.persist(); }
+}
+
+export async function deleteSessionFiles(sessionId) {
+  try { await idbDo('readwrite', s => s.delete(sessionId)); } catch { /* ignore */ }
+}

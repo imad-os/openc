@@ -9,6 +9,7 @@ import { refreshFiles } from './files.js';
 import { openSettings, openAgents, openAccount } from './modals.js';
 import { showConnect } from './connect.js';
 import { openRunningList, isRunning } from './runs.js';
+import { display, setDisplay } from './display.js';
 import { openSession } from './sessions.js';
 
 let lastStats = null;
@@ -17,7 +18,16 @@ export function initWorkspace() {
   $('#mchip').addEventListener('click', e => openModelPicker(e.currentTarget));
   $('#perm').addEventListener('change', e => { state.settings.perm = e.target.value; saveSettings(); });
   $('#t-left').addEventListener('click', () => $('#left').classList.toggle('open'));
-  $('#t-right').addEventListener('click', () => $('#right').classList.toggle('open'));
+  $('#t-right').addEventListener('click', () => { $('#right').classList.toggle('open'); $('#t-right').classList.remove('has-new'); });
+  const toggleFiles = () => { setDisplay({ showFiles: !display.showFiles }); paintFilesBtn(); };
+  $('#t-files').addEventListener('click', toggleFiles);
+  document.addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key === '.') { e.preventDefault(); toggleFiles(); } });
+  on('display', paintFilesBtn);
+  on('fs-changed', () => {
+    if (!display.showFiles) $('#t-files').classList.add('has-new');
+    if (!$('#right').classList.contains('open')) $('#t-right').classList.add('has-new');
+  });
+  paintFilesBtn();
   $('#chat').addEventListener('click', () => $('#left').classList.remove('open'));
   $('#scrim').addEventListener('click', () => { $('#left').classList.remove('open'); $('#right').classList.remove('open'); });
   const syncScrim = () => $('#scrim').classList.toggle('on', $('#left').classList.contains('open') || $('#right').classList.contains('open'));
@@ -39,6 +49,13 @@ export function initWorkspace() {
   on('session', s => { lastStats = s?._lastStats || null; updateStatus(); });
   on('busy', updateStatus);
   on('user', paintAccount);
+}
+
+function paintFilesBtn() {
+  const b = $('#t-files');
+  b.classList.toggle('on', display.showFiles);
+  b.textContent = display.showFiles ? 'Hide files' : 'Files';
+  if (display.showFiles) b.classList.remove('has-new');
 }
 
 export function enterWorkspace() {

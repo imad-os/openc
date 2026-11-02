@@ -1,12 +1,53 @@
 // Files panel: tree, editor, HTML preview, upload, open a real folder, todos tab.
-import { state, on } from '../core/state.js';
+import { state, on, emit } from '../core/state.js';
 import { $, h, toast, promptDialog, confirmDialog } from '../util/dom.js';
 import { makeZip, downloadBlob } from '../util/zip.js';
-import { normPath, VirtualFS, DirFS } from '../core/fs.js';
+import { normPath, VirtualFS, DirFS, SessionFS, deleteSessionFiles } from '../core/fs.js';
 import { invalidateFileCache } from '../agent/runner.js';
 import { openInNewTab, SANDBOX } from './sandbox.js';
+import { isRunning } from './runs.js';
 
 let dirty = false, previewing = false, refreshTimer = 0;
+
+/* ---------- which files a conversation sees ---------- */
+let shared = null;                 // shared workspace: browser workspace or an opened folder
+const perSession = new Map();      // session id -> SessionFS
+export const sharedFs = () => (shared ||= new VirtualFS());
+
+/** Files for a conversation: its own (files === 'session') or the shared workspace. */
+export function fsFor(session) {
+  if (!session || session.files !== 'session') return sharedFs();
+  let f = perSession.get(session.id);
+  if (!f) perSession.set(session.id, (f = new SessionFS(session.id)));
+  return f;
+}
+
+export async function removeSessionFiles(id) {
+  perSession.delete(id);
+  await deleteSessionFiles(id);
+}
+
+/** Switch the visible conversation between its own files and the shared workspace. */
+async function setScope(mode) {
+  const s = state.session;
+  if (!s || (s.files || 'shared') === mode) return;
+  s.files = mode;
+  if (!s._draft) { const { persistSession } = await import('./sessions.js'); persistSession(s); }
+  if (runningHere()) toast('Applies from the next message; the current run keeps its files.', 4000);
+  closeViewer();
+}
+const runningHere = () => isRunning(state.session?.id);
+
+async function importShared() {
+  const from = sharedFs(), to = state.fs;
+  const files = await from.list();
+  if (!files.length) return toast('The shared workspace is empty');
+  if (!(await confirmDialog(`Copy ${files.length} file${files.length === 1 ? '' : 's'} from the shared workspace into this conversation?`, 'Copy'))) return;
+  try { for (const p of files) await to.write(p, await from.read(p)); } catch (e) { return toast(e.message); }
+  invalidateFileCache();
+  refreshFiles();
+  toast(`Copied ${files.length} files`);
+}
 
 export function initFiles() {
   $('#f-ref').addEventListener('click', refreshFiles);
@@ -16,6 +57,9 @@ export function initFiles() {
   $('#f-in').addEventListener('change', upload);
   $('#f-open').addEventListener('click', openFolder);
   $('#f-virt').addEventListener('click', () => switchFs(new VirtualFS()));
+  $('#f-import').addEventListener('click', importShared);
+  shared = state.fs;
+  on('session', () => { closeViewer(); });
   $('#tab-files').addEventListener('click', () => tab('files'));
   $('#tab-todos').addEventListener('click', () => tab('todos'));
   $('#ved').addEventListener('input', () => { dirty = true; });
@@ -48,17 +92,34 @@ function tab(name) {
   $('#p-todos').hidden = name !== 'todos';
 }
 
+/** Replace the shared workspace (browser workspace ⇄ opened folder); the conversation uses it. */
 function switchFs(fs) {
-  state.fs = fs;
+  shared = fs;
+  if (state.session && state.session.files === 'session') {
+    state.session.files = 'shared';
+    if (!state.session._draft) import('./sessions.js').then(m => m.persistSession(state.session));
+  }
   invalidateFileCache();
   closeViewer();
   refreshFiles();
 }
 
+function paintScope() {
+  const mode = state.session?.files === 'session' ? 'session' : 'shared';
+  $('#fs-scope').replaceChildren(...[
+    ['session', '🔒 This chat', 'Files private to this conversation: uploads and agent changes stay here'],
+    ['shared', '🗂 Shared', 'One workspace (or opened folder) shared by all conversations that use it'],
+  ].map(([v, label, title]) => h('button', { type: 'button', class: v === mode ? 'on' : '', title, onclick: async () => { await setScope(v); refreshFiles(); } }, label)));
+}
+
 export async function refreshFiles() {
+  state.fs = fsFor(state.session);
+  paintScope();
   $('#fs-label').textContent = state.fs.label;
   $('#f-virt').hidden = !!state.fs.virtual;
   $('#f-open').hidden = !state.fs.virtual;
+  $('#f-import').hidden = !state.fs.perSession;
+  emit('fs-active', state.fs);
   let files = [];
   try { files = await state.fs.list(); } catch (e) { toast(e.message); }
   const tree = $('#tree');
@@ -120,7 +181,7 @@ async function zipFiles(dir) {
     if (!list.length) return toast('No files to download');
     const entries = [];
     for (const p of list) entries.push({ name: dir ? p.slice(dir.length + 1) : p, data: await state.fs.readBytes(p) });
-    const base = (dir ? dir.split('/').pop() : (state.fs.virtual ? 'workspace' : state.fs.label.replace(/^Folder:\s*/, ''))) || 'workspace';
+    const base = (dir ? dir.split('/').pop() : state.fs.perSession ? (state.session?.title || 'conversation').replace(/[^\w.-]+/g, '-').slice(0, 40) : (state.fs.virtual ? 'workspace' : state.fs.label.replace(/^Folder:\s*/, ''))) || 'workspace';
     downloadBlob(makeZip(entries), `${base}.zip`);
     toast(`Zipped ${entries.length} file${entries.length === 1 ? '' : 's'}`);
   } catch (e) { toast('Zip failed: ' + e.message); }

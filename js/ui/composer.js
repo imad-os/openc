@@ -7,6 +7,7 @@ import { runAgent, createRun } from '../agent/runner.js';
 import { threadView, dropThread } from './chat.js';
 import { persistSession, draftSession, renderTodos, newSession, markDirty, openSession } from './sessions.js';
 import { currentRun, registerRun, unregisterRun, isRunning } from './runs.js';
+import { fsFor } from './files.js';
 import { recordModelStats, showModels } from './models.js';
 import { cycleAgent, setAgent } from './workspace.js';
 import { openAgents, openSettings } from './modals.js';
@@ -123,7 +124,7 @@ export async function send() {
   inp.value = '';
   autosize();
 
-  const run = createRun();
+  const run = createRun({ fs: fsFor(s) });
   const controller = new AbortController();
   const signal = controller.signal;
   const rec = { session: s, run, controller, agentName: agent.name, model: state.model, conn: state.conn };

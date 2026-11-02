@@ -16,6 +16,7 @@ export const DISPLAY_DEFAULTS = Object.freeze({
   lineNumbers: true,
   wrapCode: false,
   codeMaxHeight: 520,     // px, 0 = unlimited
+  showFiles: true,        // files panel on the right (desktop)
 });
 
 function load() {
@@ -39,6 +40,7 @@ export function applyDisplay() {
   r.style.setProperty('--code-max-h', display.codeMaxHeight ? display.codeMaxHeight + 'px' : 'none');
   r.classList.toggle('no-lines', !display.lineNumbers);
   r.classList.toggle('wrap-code', !!display.wrapCode);
+  r.classList.toggle('no-files', !display.showFiles);
   const link = document.getElementById('hl-theme');
   if (link) link.href = HL + (theme === 'light' ? 'github.min.css' : 'github-dark.min.css');
   document.querySelector('meta[name=theme-color]')?.setAttribute('content', theme === 'light' ? '#ffffff' : '#10141a');

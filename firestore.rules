@@ -62,12 +62,13 @@ service cloud.firestore {
     }
 
     function validSession() {
-      return onlyKeys(['title', 'created', 'updated', 'url', 'model', 'agent', 'todos', 'summary', 'summaryUpto', 'count'])
+      return onlyKeys(['title', 'created', 'updated', 'url', 'model', 'agent', 'todos', 'summary', 'summaryUpto', 'count', 'files'])
         && hasKeys(['title']) && isStr(data().title, 0, 200)
         && optTime('created') && optTime('updated')
         && optStr('url', 2048) && optStr('model', 300) && optStr('agent', 64)
         && optList('todos', 200) && optStr('summary', 200000)
-        && optNum('summaryUpto', 0, 1000000) && optNum('count', 0, 1000000);
+        && optNum('summaryUpto', 0, 1000000) && optNum('count', 0, 1000000)
+        && (!('files' in data()) || data().files in ['session', 'shared']);
     }
 
     function validMessage() {
