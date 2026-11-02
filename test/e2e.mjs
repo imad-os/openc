@@ -52,7 +52,7 @@ await page.press('#inp', 'Enter');
 await page.waitForSelector('.runfoot', { timeout: 20000 });
 const chatText = await page.textContent('#chat');
 ok(chatText.includes('All done.'), 'final answer rendered');
-ok(chatText.includes('tool call recovered from text'), 'text tool call recovered');
+ok(await page.isVisible('.tool:has-text("read_file")'), 'tool calls written as text are executed (streamed mode)');
 ok(chatText.includes('unfinished todo'), 'auto-continue on unfinished todos');
 ok(await page.isVisible('#chat table'), 'markdown table rendered');
 ok(await page.isVisible('#chat .codeblock'), 'code block rendered');
@@ -159,6 +159,32 @@ await page.press('#inp', 'Enter');
 await page.waitForSelector('#chat .runfoot', { timeout: 20000 });
 ok((await page.textContent('#chat')).includes('SDK_MAGIC_42 found'), 'web_fetch tool read the page');
 ok((await page.locator('.tool:has-text("web_fetch") .tres').textContent()).includes('Mock SDK docs'), 'page converted to text with its title');
+
+// streamed tool calls: progress is visible while a file is being written
+await page.click('#b-new');
+await page.fill('#inp', 'write a big file');
+await page.press('#inp', 'Enter');
+await page.waitForFunction(() => /write_file big\.txt/.test(document.querySelector('#runbar')?.textContent || ''), null, { timeout: 15000 });
+ok(true, 'status bar shows the tool call being written (write_file big.txt …)');
+await page.waitForFunction(() => /Writing tool call write_file big\.txt · [\d.k]+ chars · \d+ lines/.test(document.querySelector('#chat').textContent));
+ok(true, 'chat shows live size of the file being written');
+await page.waitForSelector('#chat .runfoot', { timeout: 20000 });
+ok((await page.textContent('#chat')).includes('Big file written.'), 'big file run completed');
+ok(!(await page.textContent('#chat .thread')).includes('"arguments"'), 'raw tool-call JSON is not shown in the answer');
+ok((await page.evaluate(() => JSON.parse(localStorage.getItem('oc2.vfs'))['big.txt'])).split('\n').length === 60, 'big.txt written with 60 lines');
+
+// native tool calling still works when selected
+await page.click('#b-set');
+await page.selectOption('.mbox select:near(:text("Tool calls"))', 'native');
+await page.click('.mbox button.primary:has-text("Save")');
+await page.click('#b-new');
+await page.fill('#inp', 'read the docs again');
+await page.press('#inp', 'Enter');
+await page.waitForSelector('#chat .runfoot', { timeout: 20000 });
+ok((await page.textContent('#chat')).includes('SDK_MAGIC_42 found'), 'native tool calling mode works');
+await page.click('#b-set');
+await page.selectOption('.mbox select:near(:text("Tool calls"))', 'stream');
+await page.click('.mbox button.primary:has-text("Save")');
 
 // stall detection: no tokens for 3 s → automatic retry of the step
 await page.click('#b-new');

@@ -380,3 +380,34 @@ export function toolSchemas(names, subs = []) {
     return { type: 'function', function: { name, description: t.description, parameters: { type: 'object', properties: t.parameters, required: t.required || [] } } };
   });
 }
+
+/**
+ * "Streamed" tool calling: tools are described in the system prompt and the model writes
+ * <tool_call>{json}</tool_call> as normal text. Everything streams (you can watch a file being
+ * written), works with models that lack native tool support, and avoids Ollama buffering a
+ * whole tool call silently until it is complete.
+ */
+export function toolProtocolPrompt(names, subs = []) {
+  const docs = toolSchemas(names, subs).map(({ function: f }) => {
+    const props = f.parameters.properties || {};
+    const req = new Set(f.parameters.required || []);
+    const args = Object.entries(props).map(([k, p]) => {
+      const type = p.enum ? p.enum.map(v => JSON.stringify(v)).join(' | ') : p.type === 'array' ? 'array' : p.type;
+      return `  - ${k}${req.has(k) ? '' : ' (optional)'}: ${type}${p.description ? ' — ' + p.description : ''}`;
+    }).join('\n');
+    return `### ${f.name}\n${f.description}\n${args || '  (no arguments)'}`;
+  }).join('\n\n');
+  return `# How to use tools
+To call a tool, write a block exactly like this:
+<tool_call>
+{"name": "read_file", "arguments": {"path": "index.html"}}
+</tool_call>
+Rules:
+- The block must contain valid JSON. Inside strings escape newlines as \\n and quotes as \\".
+- You may write one short sentence before your calls, and several <tool_call> blocks in one reply.
+- After your tool calls, STOP writing. The results arrive in the next message inside <tool_result> blocks. Never write <tool_result> yourself and never guess results.
+- When the task is done, reply normally with no <tool_call> block.
+
+# Available tools
+${docs}`;
+}

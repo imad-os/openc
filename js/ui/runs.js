@@ -37,11 +37,12 @@ export function describe(rec) {
   if (MODEL_PHASES.has(st.phase)) {
     if (st.phase === 'waiting') {
       const limit = (S.firstTokenTimeout || 600) * 1000;
-      if (silent > 30000) { health = 'slow'; hint = `No output yet. Large prompts and loading a model into memory can take a while; it gives up after ${fmt.dur(limit)}.`; }
+      if (silent > 30000) { health = 'slow'; hint = st.nativeTools ? 'No output yet. The model is reading the prompt, loading, or writing a native tool call (sent only when complete).' : `No output yet. Large prompts and loading a model into memory can take a while; it gives up after ${fmt.dur(limit)}.`; }
       if (rec.ps) hint = rec.ps + (hint ? ' ' + hint : '');
     } else {
       const limit = (S.idleTimeout || 120) * 1000;
       if (silent > 15000) { health = silent > limit / 2 ? 'stalled' : 'slow'; hint = `No new tokens for ${fmt.dur(silent)} (retries automatically after ${fmt.dur(limit)}).`; }
+      if (st.nativeTools && silent > 15000) { health = 'slow'; hint = `No new tokens for ${fmt.dur(silent)}. With native tool calling Ollama sends a tool call only when it is complete, so the model may be writing a file right now. Settings → Agent → Tool calls: "Streamed" shows live progress.`; }
     }
   } else if (st.phase === 'approval' || st.phase === 'question') health = 'you';
   else if (st.phase === 'tool' && inPhase > 30000) { health = 'slow'; hint = 'This tool is taking long (web requests time out after 30–45 s).'; }

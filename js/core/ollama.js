@@ -111,6 +111,8 @@ export async function chatStream(body, { signal, onChunk, onRetry, conn = state.
         onChunk?.(m, out);
         if (ch.done) out.stats = ch;
       }
+      // A stream that ends without its final "done" message was cut off (server crash, proxy, network).
+      if (!out.stats) throw new StallError('the server closed the connection before the reply was complete');
       return out;
     } catch (e) {
       if (stall && !signal?.aborted) e = new StallError(stall);

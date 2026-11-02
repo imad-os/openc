@@ -77,6 +77,7 @@ export function openSettings(tab = 'general') {
     const autoC = cb(s.autoContinue), autoK = cb(s.autoCompact), sound = cb(s.sound), desk = cb(s.desktopNotify);
     const vol = h('input', { type: 'range', min: '0', max: '1', step: '0.05', value: String(s.volume) });
     const web = cb(s.webEnabled), retry = cb(s.autoRetryStall);
+    const toolMode = sel(s.toolMode, [['stream', 'Streamed (recommended, live progress)'], ['native', 'Native Ollama tool calling']]);
     const provider = sel(s.searchProvider, [['auto', 'Automatic (best available)'], ['ollama', 'Ollama web search (key)'], ['jina', 'Jina search (key)'], ['searxng', 'SearXNG (your instance)'], ['duckduckgo', 'DuckDuckGo (free, via Jina Reader)'], ['wikipedia', 'Wikipedia only']]);
     const secret = (v, ph) => h('input', { type: 'password', value: v || '', placeholder: ph, autocomplete: 'off' });
     const okey = secret(s.ollamaKey, 'ollama.com → Settings → Keys'), jkey = secret(s.jinaKey, 'optional: jina.ai API key');
@@ -115,6 +116,8 @@ export function openSettings(tab = 'general') {
       h('div', { class: 'grid2' }, field('Thinking (models that support it)', think), field('Max agent steps per message', steps)),
       section('Agent'),
       field('Permissions', perm),
+      field('Tool calls', toolMode),
+      h('div', { class: 'dim small' }, 'Streamed: tools are described in the prompt and calls are written as text, so you see progress live (e.g. a file being written) and it works with any model. Native: Ollama tool API; tool calls arrive only when complete, so long files mean long silence.'),
       check(autoC, 'Auto-continue when the agent stops with unfinished todos'),
       check(autoK, 'Auto-compact old messages when the context window fills up'),
       section('Internet (web_search, web_fetch)'),
@@ -153,6 +156,7 @@ export function openSettings(tab = 'general') {
                 firstTokenTimeout: Math.min(3600, Math.max(10, +first.value || DEFAULT_SETTINGS.firstTokenTimeout)),
                 idleTimeout: Math.min(1800, Math.max(10, +idle.value || DEFAULT_SETTINGS.idleTimeout)),
                 autoRetryStall: retry.checked,
+                toolMode: toolMode.value,
               });
               if (s.desktopNotify && !(await ensureNotifyPermission())) { s.desktopNotify = false; toast('Notifications are blocked in this browser'); }
               saveSettings();

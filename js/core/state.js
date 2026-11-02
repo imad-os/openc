@@ -12,6 +12,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   perm: 'ask',            // ask | edits | auto
   autoContinue: true,     // nudge the agent when it stops with unfinished todos
   autoCompact: true,      // summarize old messages when the context window fills up
+  toolMode: 'stream',     // stream: tool calls written as text (live progress) | native: Ollama tool API
   sound: true,
   volume: 0.6,
   desktopNotify: false,

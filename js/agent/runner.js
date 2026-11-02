@@ -11,9 +11,9 @@
 // Live progress is written to run.status (read by the UI every second).
 import { state, emit, subagents } from '../core/state.js';
 import { chatStream, HttpError, StallError } from '../core/ollama.js';
-import { TOOLS, toolSchemas } from './tools.js';
+import { TOOLS, toolSchemas, toolProtocolPrompt } from './tools.js';
 import { extractToolCalls } from './parse.js';
-import { prepareMessages, estimateTokens, compactThread } from './context.js';
+import { prepareMessages, estimateTokens, compactThread, toTextProtocol } from './context.js';
 import { parseArgs, clip } from '../util/misc.js';
 import { toolTitle } from '../ui/chat.js';
 
@@ -77,8 +77,12 @@ function nudge(thread, view, text, label) {
 }
 
 /** Stream one model request with a per-step controller that the UI can abort to retry. */
-async function requestStep(run, body, block, signal, prefix) {
+async function requestStep(run, body, block, signal, prefix, streamTools) {
   const S = state.settings;
+  // Native tool calls arrive only when complete (silence while the model writes a file): be patient.
+  const nativeTools = !!body.tools;
+  const first = (S.firstTokenTimeout || 0) * 1000, idle = (S.idleTimeout || 0) * 1000;
+  run.status.nativeTools = nativeTools;
   for (let attempt = 0; ; attempt++) {
     const step = new AbortController();
     const onAbort = () => step.abort();
@@ -90,8 +94,8 @@ async function requestStep(run, body, block, signal, prefix) {
       return await chatStream(body, {
         signal: step.signal,
         conn: run.conn,
-        firstTokenTimeout: (S.firstTokenTimeout || 0) * 1000,
-        idleTimeout: (S.idleTimeout || 0) * 1000,
+        firstTokenTimeout: nativeTools && first ? Math.max(first, 1800000) : first,
+        idleTimeout: nativeTools && idle ? Math.max(idle, 1800000) : idle,
         onRetry: (n, e) => setPhase(run, 'retrying', `${prefix}server error, retry ${n}: ${e.message}`),
         onChunk: (m, acc) => {
           const st = run.status;
@@ -99,10 +103,26 @@ async function requestStep(run, body, block, signal, prefix) {
           if (!st.firstTokenAt) st.firstTokenAt = now;
           st.lastActivity = now;
           st.chars = acc.thinking.length + acc.content.length;
-          const phase = m.tool_calls?.length ? 'calling' : m.content ? 'writing' : m.thinking ? 'thinking' : st.phase;
-          if (phase !== st.phase) { st.phase = phase; st.since = now; st.detail = prefix + (phase === 'calling' ? 'preparing tool calls' : ''); emit('run-status', run); }
+          let phase = m.tool_calls?.length ? 'calling' : m.content ? 'writing' : m.thinking ? 'thinking' : st.phase;
+          let detail = phase === 'calling' ? 'tool calls received' : '';
+          let shown = acc.content;
+          const i = streamTools ? acc.content.indexOf('<tool_call>') : -1;
+          if (i >= 0) {
+            // Live progress of a tool call being written (e.g. a whole file).
+            const tail = acc.content.slice(i);
+            const n = tail.split('<tool_call>').length - 1;
+            const cur = tail.slice(tail.lastIndexOf('<tool_call>'));
+            const name = cur.match(/"name"\s*:\s*"([^"]+)"/)?.[1] || '…';
+            const target = cur.match(/"(?:path|url|pattern|query|agent|from)"\s*:\s*"([^"]{1,120})"/)?.[1] || '';
+            const lines = (cur.match(/\\n/g) || []).length + 1;
+            phase = 'calling';
+            detail = `${n > 1 ? `call ${n}: ` : ''}${name}${target ? ' ' + target : ''} · ${fmtK(cur.length)} chars${lines > 1 ? ` · ${lines} lines` : ''}`;
+            shown = acc.content.slice(0, i) + `\n\n*✍ Writing tool call ${detail}…*`;
+          }
+          if (phase !== st.phase) { st.phase = phase; st.since = now; emit('run-status', run); }
+          st.detail = prefix + detail;
           if (acc.thinking) block.thinking(acc.thinking);
-          block.text(acc.content);
+          block.text(shown);
         },
       });
     } catch (e) {
@@ -131,7 +151,13 @@ export async function runAgent({ agent, thread, view, signal, run, hooks = {}, d
   const model = resolveModel(agent, run);
   if (!model) throw new Error('No model selected');
   const caps = capsOf(run, model);
-  let names = caps.length && !caps.includes('tools') ? [] : agentTools(agent, depth);
+  // Streamed mode works with any model (tools are described in the prompt); native needs the "tools" capability.
+  const streamTools = S.toolMode !== 'native';
+  let names = !streamTools && caps.length && !caps.includes('tools') ? [] : agentTools(agent, depth);
+  const fullSystem = async () => {
+    const base = await systemPrompt(agent, thread, names, run.fs);
+    return streamTools && names.length ? base + '\n\n' + toolProtocolPrompt(names, subagents()) : base;
+  };
   let think = caps.includes('thinking') && S.think !== 'auto' ? (S.think === 'on' ? true : S.think === 'off' ? false : S.think) : undefined;
   const budget = Math.max(2048, Math.floor(S.num_ctx * 0.75) - 512);
   const canWrite = names.some(n => TOOLS[n].perm === 'edit');
@@ -148,7 +174,7 @@ export async function runAgent({ agent, thread, view, signal, run, hooks = {}, d
     Object.assign(run.status, { agent: agent.name, depth, model, maxSteps: S.maxSteps });
 
     // 1) Fit the context window
-    let system = await systemPrompt(agent, thread, names, run.fs);
+    let system = await fullSystem();
     let { msgs, tokens } = prepareMessages(thread, budget - estimateTokens(system));
     if (S.autoCompact && tokens + estimateTokens(system) > budget) {
       const note = view.note('Compacting context…', 'auto');
@@ -158,7 +184,7 @@ export async function runAgent({ agent, thread, view, signal, run, hooks = {}, d
         note.textContent = n ? `↻ Context compacted: ${n} older messages summarized` : 'Context is large and could not be compacted further';
         if (n) {
           await hooks.persist?.();
-          system = await systemPrompt(agent, thread, names, run.fs);
+          system = await fullSystem();
           ({ msgs, tokens } = prepareMessages(thread, budget - estimateTokens(system)));
         }
       } catch (e) {
@@ -169,17 +195,19 @@ export async function runAgent({ agent, thread, view, signal, run, hooks = {}, d
 
     // 2) Ask the model (streaming, with stall watchdog)
     const block = view.block(label);
+    const useText = streamTools && names.length > 0;
     const body = {
       model,
-      messages: [{ role: 'system', content: system }, ...msgs],
+      messages: [{ role: 'system', content: system }, ...(useText ? toTextProtocol(msgs) : msgs)],
       options: { temperature: agent.temperature ?? S.temperature, num_ctx: S.num_ctx },
     };
-    if (names.length) body.tools = toolSchemas(names, subagents());
+    if (useText) body.options.stop = ['<tool_result'];
+    else if (names.length) body.tools = toolSchemas(names, subagents());
     if (think !== undefined) body.think = think;
 
     let res;
     try {
-      res = await requestStep(run, body, block, signal, prefix);
+      res = await requestStep(run, body, block, signal, prefix, useText);
     } catch (e) {
       block.finish();
       if (e instanceof HttpError && body.tools && /does not support tools|tools? (are|is) not supported/i.test(e.detail)) {
@@ -210,7 +238,14 @@ export async function runAgent({ agent, thread, view, signal, run, hooks = {}, d
     let content = res.content;
     if (!calls.length && names.length) {
       const parsed = extractToolCalls(content, names);
-      if (parsed) { calls = parsed.calls; content = parsed.rest; block.badge('tool call recovered from text'); }
+      if (parsed) { calls = parsed.calls; content = parsed.rest; if (!useText) block.badge('tool call recovered from text'); }
+      else if (useText && /<tool_call>/.test(content)) {
+        // A malformed call: tell the model instead of silently treating it as a final answer.
+        thread.messages.push({ role: 'assistant', content, _agent: agent.name });
+        block.text(content, true); block.finish();
+        nudge(thread, view, 'Your <tool_call> block could not be parsed as JSON. Write it again as {"name": ..., "arguments": {...}} with valid JSON (escape newlines as \\n and quotes as \\").', 'Malformed tool call: asking the model to fix it');
+        continue;
+      }
     }
     block.text(content, true);
 

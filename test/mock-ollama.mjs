@@ -13,8 +13,20 @@ const call = (name, args) => ({ function: { name, arguments: args } });
 
 let stallCount = 0;
 
+/** Streamed protocol: turn <tool_result> user messages back into tool messages. */
+function normalize(msgs) {
+  const out = [];
+  for (const m of msgs) {
+    if (m.role === 'user' && m.content.startsWith('<tool_result')) {
+      for (const r of m.content.matchAll(/<tool_result name="([^"]+)">\n([\s\S]*?)\n<\/tool_result>/g)) out.push({ role: 'tool', tool_name: r[1], content: r[2] });
+    } else out.push(m);
+  }
+  return out;
+}
+
 function script(body) {
-  const msgs = body.messages;
+  const msgs = normalize(body.messages);
+  const hasTools = !!body.tools || /# How to use tools/.test(body.messages[0]?.content || '');
   const last = msgs[msgs.length - 1];
   const tools = msgs.filter(m => m.role === 'tool');
   const lastTool = tools[tools.length - 1];
@@ -25,11 +37,18 @@ function script(body) {
   if (last.role === 'user' && /slow job/i.test(last.content)) {
     return { thinking: '**Planning the work** ' + 'step '.repeat(30), content: 'Slow job finished.', delay: 120 };
   }
-  if (/read the docs/i.test(msgs.find(m => m.role === 'user')?.content || '') && body.tools) {
+  if (last.role === 'user' && /big file/i.test(last.content)) {
+    const content = Array.from({ length: 60 }, (_, i) => `line ${i + 1} of the big file`).join('\n');
+    return { content: '', tool_calls: [call('write_file', { path: 'big.txt', content })], slowCalls: true };
+  }
+  if (last.role === 'tool' && lastTool?.tool_name === 'write_file' && /big file/i.test(msgs.filter(m => m.role === 'user').pop()?.content || '')) {
+    return { content: 'Big file written.' };
+  }
+  if (/read the docs/i.test(msgs.find(m => m.role === 'user')?.content || '') && hasTools) {
     if (last.role === 'user') return { content: '', tool_calls: [call('web_fetch', { url: `http://localhost:${PORT}/docs` })] };
     if (last.role === 'tool') return { content: 'The docs say: ' + (last.content.includes('SDK_MAGIC_42') ? 'SDK_MAGIC_42 found' : 'nothing') };
   }
-  if (!body.tools) return { content: 'Hello from **chat** mode.' };
+  if (!hasTools || (last.role === 'user' && /^hi\b/i.test(last.content))) return { content: 'Hello from **chat** mode.' };
   if (last.role === 'user' && /demo/i.test(last.content)) {
     return {
       thinking: 'Thinking Process:\n\n1.  **Analyze the input:** The user wants a demo.\n2.  **Draft the page:** Simple HTML with a button.\n',
@@ -77,13 +96,18 @@ http.createServer((req, res) => {
     if (req.url !== '/api/chat') return json({ error: 'not found' }, 404);
     const body = JSON.parse(raw || '{}');
     const r = script(body);
+    // Streamed tool protocol (no "tools" field): write tool calls as text, like a real model would.
+    if (r.tool_calls && !body.tools) {
+      r.content = (r.content ? r.content + '\n' : '') + r.tool_calls.map(c => `<tool_call>\n${JSON.stringify({ name: c.function.name, arguments: c.function.arguments })}\n</tool_call>`).join('\n');
+      delete r.tool_calls;
+    }
     if (body.stream === false) return json({ message: { role: 'assistant', content: r.content }, done: true });
     res.writeHead(200, { ...cors, 'content-type': 'application/x-ndjson' });
     const send = o => res.write(JSON.stringify({ model: body.model, ...o }) + '\n');
     const wait = ms => new Promise(r2 => setTimeout(r2, ms));
     if (r.thinking) for (const w of r.thinking.split(/(?<= )/)) { send({ message: { role: 'assistant', content: '', thinking: w }, done: false }); await wait(r.delay || 5); }
     if (r.stallAfter) { await wait(8000); try { res.end(); } catch {} return; }
-    for (const w of (r.content || '').split(/(?<= )/)) { if (w) send({ message: { role: 'assistant', content: w }, done: false }); await wait(5); }
+    for (const w of (r.content || '').split(/(?<= )/)) { if (w) send({ message: { role: 'assistant', content: w }, done: false }); await wait(r.slowCalls ? 25 : 5); }
     if (r.tool_calls) send({ message: { role: 'assistant', content: '', tool_calls: r.tool_calls }, done: false });
     send({ message: { role: 'assistant', content: '' }, done: true, done_reason: 'stop', prompt_eval_count: 900, eval_count: 120, eval_duration: 2e9 });
     res.end();

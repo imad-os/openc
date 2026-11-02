@@ -25,6 +25,26 @@ export function toWire(m) {
   return o;
 }
 
+/**
+ * Convert wire messages to the streamed text protocol: assistant tool calls become
+ * <tool_call> blocks, tool results become one user message of <tool_result> blocks.
+ */
+export function toTextProtocol(msgs) {
+  const out = [];
+  for (const m of msgs) {
+    if (m.role === 'assistant' && m.tool_calls?.length) {
+      const calls = m.tool_calls.map(c => `<tool_call>\n${JSON.stringify({ name: c.function.name, arguments: c.function.arguments })}\n</tool_call>`).join('\n');
+      out.push({ role: 'assistant', content: [m.content, calls].filter(Boolean).join('\n\n') });
+    } else if (m.role === 'tool') {
+      const block = `<tool_result name="${m.tool_name || 'tool'}">\n${m.content}\n</tool_result>`;
+      const prev = out[out.length - 1];
+      if (prev?._results) prev.content += '\n\n' + block;
+      else out.push({ role: 'user', content: block, _results: true });
+    } else out.push({ ...m });
+  }
+  return out.map(({ _results, ...m }) => m);
+}
+
 const BIG_ARG_KEYS = ['content', 'new_string', 'old_string', 'code', 'prompt'];
 
 /**
