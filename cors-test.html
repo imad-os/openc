@@ -57,6 +57,8 @@ a { color: var(--ac) }
       <label>Ollama API URL<input id="url" placeholder="http://localhost:11434" autocomplete="url" required></label>
       <label>API key (optional)<input id="key" type="password" autocomplete="off" placeholder="only if your proxy needs one"></label>
     </div>
+    <label style="flex-direction:row;align-items:center;gap:8px;color:var(--tx)"><input type="checkbox" id="useProxy" style="width:auto"> Go through a CORS proxy (no Ollama config change)</label>
+    <label id="proxyBox" hidden>Proxy URL (run <code>node ollama-cors-proxy.mjs</code> on the Ollama machine — <a href="proxy/ollama-cors-proxy.mjs" download>download</a>)<input id="proxy" value="http://localhost:11435" placeholder="http://localhost:11435 or https://proxy.example/?url={url}"></label>
     <div class="row">
       <button class="primary" id="go" type="submit">Run tests</button>
       <span class="dim small">Testing from origin <code id="origin"></code></span>
@@ -89,6 +91,16 @@ $('#origin').textContent = ORIGIN;
 // Prefill from the app: ?url=… and a one-time key handoff via localStorage (keys never go in the URL).
 const params = new URLSearchParams(location.search);
 $('#url').value = params.get('url') || localStorage.getItem('oc2.corsLastUrl') || 'http://localhost:11434';
+if (params.get('proxy')) { $('#useProxy').checked = true; $('#proxy').value = params.get('proxy'); }
+const syncProxy = () => { $('#proxyBox').hidden = !$('#useProxy').checked; };
+$('#useProxy').addEventListener('change', syncProxy); syncProxy();
+const proxyOn = () => $('#useProxy').checked && $('#proxy').value.trim();
+/** Same mapping as the app: prefix "proxy/" + full URL, or a {url} template. */
+const finalUrl = path => {
+  const target = base() + path, p = proxyOn();
+  if (!p) return target;
+  return p.includes('{url}') ? p.replace('{url}', encodeURIComponent(target)) : p.replace(/\/+$/, '') + '/' + target;
+};
 try { const k = localStorage.getItem('oc2.corsKey'); if (k) { $('#key').value = k; localStorage.removeItem('oc2.corsKey'); } } catch {}
 
 const base = () => {
@@ -106,7 +118,7 @@ async function req(path, { method = 'GET', body, auth = true, mode = 'cors', tim
   const key = $('#key').value.trim();
   if (auth && key) headers.authorization = 'Bearer ' + key;
   const t = withTimeout(timeout);
-  try { return await fetch(base() + path, { method, headers, body: body ? JSON.stringify(body) : undefined, mode, signal: t.signal, cache: 'no-store' }); }
+  try { return await fetch(finalUrl(path), { method, headers, body: body ? JSON.stringify(body) : undefined, mode, signal: t.signal, cache: 'no-store' }); }
   finally { t.done(); }
 }
 
@@ -140,7 +152,8 @@ async function run(e) {
   // 1. URL & mixed content
   const c1 = check('URL and page security');
   let target;
-  try { target = new URL(url); } catch { c1.set('fail', 'This is not a valid URL.'); return finish(facts); }
+  try { target = new URL(proxyOn() ? finalUrl('') : url); } catch { c1.set('fail', 'This is not a valid URL.'); return finish(facts); }
+  facts.proxy = !!proxyOn();
   facts.host = target.hostname;
   if (location.protocol === 'https:' && target.protocol === 'http:' && !isLocalHost(target.hostname)) {
     facts.mixed = true;
@@ -154,6 +167,7 @@ async function run(e) {
   const r2 = await timed(() => req('/api/version', { mode: 'no-cors', auth: false }));
   facts.reachable = r2.ok;
   if (r2.ok) c2.set('pass', 'The server answered (content hidden at this stage; CORS is checked next).', r2.ms);
+  else if (facts.proxy) c2.set('fail', `The proxy ${proxyOn()} did not answer. Start it with "node ollama-cors-proxy.mjs" (add --host 0.0.0.0 to reach it from another device).`, r2.ms);
   else c2.set('fail', facts.mixed ? 'Blocked by the browser (mixed content).' : `No answer: ${r2.error.name === 'AbortError' ? 'timed out after 10 s' : 'connection failed'}. The server is down, the address/port is wrong, a firewall blocks it, or Ollama only listens on localhost (OLLAMA_HOST).`, r2.ms);
 
   // 3. CORS simple request
@@ -211,7 +225,7 @@ function finish(f) {
   const allGood = f.cors && f.auth !== false && f.preflight !== false && !f.mixed;
   if (allGood) {
     v.className = 'verdict ok';
-    v.innerHTML = `✓ This website can use ${esc(f.url)}${f.version ? ` (Ollama ${esc(f.version)})` : ''}.<p>${f.models} model${f.models === 1 ? '' : 's'} available. You can connect from Ollama Code.</p>`;
+    v.innerHTML = `✓ This website can use ${esc(f.url)}${f.version ? ` (Ollama ${esc(f.version)})` : ''}${f.proxy ? ' through the CORS proxy' : ''}.<p>${f.models} model${f.models === 1 ? '' : 's'} available. You can connect from Ollama Code.</p>`;
     if (lastModels.length) {
       $('#model').innerHTML = lastModels.map(m => `<option>${esc(m)}</option>`).join('');
       $('#speed').hidden = false;
@@ -260,6 +274,12 @@ function showFix(f, ok) {
       <li>From another device, Ollama must listen on all interfaces: set <code>OLLAMA_HOST=0.0.0.0:11434</code> (commands below) and allow port 11434 in the firewall.</li>
       <li>Check the IP/host and port. Phones on mobile data cannot reach a home LAN address (192.168.x.x).</li></ul>`;
   }
+  if (!f.proxy && (f.cors === false || f.reachable === false)) {
+    html += `<p><b>Quickest fix, no Ollama settings to change:</b> run the CORS proxy on the computer with Ollama, then tick "Go through a CORS proxy" above (and "Use CORS proxy" in the app):</p>` +
+      block(`curl -fsSLO ${new URL('proxy/ollama-cors-proxy.mjs', location.href).href}\nnode ollama-cors-proxy.mjs${/^http:\/\/(localhost|127\.0\.0\.1):11434$/.test(f.url) ? '' : ' --target ' + f.url}`) +
+      `<p>Or allow this website in Ollama itself:</p>`;
+  }
+  if (f.proxy && f.reachable === false) html += `<p>The proxy is not running or not reachable. Start it on the Ollama computer: <code>node ollama-cors-proxy.mjs</code>. From an https page the proxy must be <code>localhost</code> or served over https.</p>`;
   if (f.cors === false || f.reachable === false) {
     const o = ORIGIN;
     html += `<p>Allow this website in Ollama with <code>OLLAMA_ORIGINS</code>. The safest value is exactly this origin: <code>${esc(o)}</code> (use <code>*</code> to allow any website).</p>

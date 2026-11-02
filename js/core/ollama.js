@@ -10,6 +10,19 @@ export function normalizeUrl(u) {
   return baseUrl(u);
 }
 
+/**
+ * Final request URL. With "Use CORS proxy" the request goes to the proxy, which forwards it:
+ * proxy "http://localhost:11435" → http://localhost:11435/http://server:11434/api/tags,
+ * or a template containing {url} (e.g. https://corsproxy.example/?url={url}).
+ */
+export function apiUrl(conn, path) {
+  const target = baseUrl(conn.url) + path;
+  const p = conn.proxy && String(conn.proxyUrl || '').trim();
+  if (!p) return target;
+  if (p.includes('{url}')) return p.replace('{url}', encodeURIComponent(target));
+  return p.replace(/\/+$/, '') + '/' + target;
+}
+
 export class HttpError extends Error {
   constructor(status, detail) {
     super(`HTTP ${status}: ${detail}`);
@@ -25,13 +38,15 @@ export async function request(path, body, { signal, conn = state.conn } = {}) {
   if (conn.key) headers.authorization = 'Bearer ' + conn.key;
   let res;
   try {
-    res = await fetch(baseUrl(conn.url) + path, {
+    res = await fetch(apiUrl(conn, path), {
       method: body ? 'POST' : 'GET', headers, signal,
       body: body ? JSON.stringify(body) : undefined,
     });
   } catch (e) {
     if (e.name === 'AbortError') throw e;
-    throw new Error(`Cannot reach ${baseUrl(conn.url)} (${e.message}). The server may be down, or the browser blocked the request (CORS / mixed content).`);
+    throw new Error(conn.proxy && conn.proxyUrl
+      ? `Cannot reach the CORS proxy ${conn.proxyUrl} (${e.message}). Is ollama-cors-proxy running? From an https page the proxy must be on localhost or https.`
+      : `Cannot reach ${baseUrl(conn.url)} (${e.message}). The server may be down, or the browser blocked the request (CORS / mixed content). Try "Use CORS proxy".`);
   }
   if (!res.ok) {
     let text = '';

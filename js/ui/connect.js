@@ -13,7 +13,10 @@ const host = u => { try { return new URL(u).host; } catch { return u; } };
 export function initConnect() {
   $('#c-form').addEventListener('submit', onSubmit);
   $('#c-account').addEventListener('click', openAccount);
-  $('#c-cors').addEventListener('click', () => openCorsTester($('#c-url').value.trim() || 'http://localhost:11434', $('#c-key').value.trim()));
+  $('#c-cors').addEventListener('click', () => openCorsTester($('#c-url').value.trim() || 'http://localhost:11434', $('#c-key').value.trim(), $('#c-proxy').checked ? $('#c-proxy-url').value.trim() : ''));
+  $('#c-proxy').addEventListener('change', paintProxyBox);
+  $('#c-url').addEventListener('input', paintProxyBox);
+  paintProxyBox();
   on('user', paintAccountButton);
 }
 
@@ -22,9 +25,9 @@ function paintAccountButton() {
 }
 
 /** Open the standalone CORS tester (cors-test.html) in a new tab. The key is handed over via localStorage, never the URL. */
-export function openCorsTester(url, key = '') {
+export function openCorsTester(url, key = '', proxy = '') {
   try { if (key) localStorage.setItem('oc2.corsKey', key); } catch { /* ignore */ }
-  window.open(`cors-test.html?url=${encodeURIComponent(normalizeUrl(url))}`, '_blank');
+  window.open(`cors-test.html?url=${encodeURIComponent(normalizeUrl(url))}${proxy ? '&proxy=' + encodeURIComponent(proxy) : ''}`, '_blank');
 }
 
 export async function showConnect() {
@@ -46,20 +49,35 @@ async function paintSaved() {
     box.append(h('div', { class: 'conn' },
       h('button', { class: 'conn-main', type: 'button', title: c.lastModel ? `Connect and continue with ${c.lastModel}` : 'Connect', onclick: () => connect(c, { resume: true }) },
         h('b', {}, c.label || host(c.url)),
-        h('span', { class: 'dim small' }, c.url + (c.key ? ' · 🔑 key saved' : '')),
+        h('span', { class: 'dim small' }, c.url + (c.key ? ' · 🔑 key saved' : '') + (c.proxy ? ` · via proxy ${c.proxyUrl}` : '')),
         h('span', { class: 'dim small' }, (c.lastModel ? '▸ ' + c.lastModel : 'No model chosen yet') + (c.lastUsed ? ' · ' + fmt.ago(c.lastUsed) : ''))),
       h('div', { class: 'conn-act' },
         h('button', { class: 'btn sm', type: 'button', onclick: () => connect(c, { resume: false }) }, 'Models'),
-        h('button', { class: 'btn sm ghost', type: 'button', title: 'Test CORS / connection in a new tab', onclick: () => openCorsTester(c.url, c.key) }, '🩺'),
+        h('button', { class: 'btn sm ghost', type: 'button', title: 'Test CORS / connection in a new tab', onclick: () => openCorsTester(c.url, c.key, c.proxy ? c.proxyUrl : '') }, '🩺'),
         h('button', { class: 'btn sm ghost', type: 'button', title: 'Edit', onclick: () => fillForm(c) }, '✎'),
         h('button', { class: 'btn sm ghost danger', type: 'button', title: 'Remove', onclick: () => removeConn(c) }, '×'))));
   }
+}
+
+/** Show the proxy URL field and the exact command to start the proxy for the entered server. */
+function paintProxyBox() {
+  const on = $('#c-proxy').checked;
+  $('#c-proxy-box').hidden = !on;
+  if (!on) return;
+  let target = 'http://127.0.0.1:11434';
+  try { target = normalizeUrl($('#c-url').value || target); } catch { /* keep default */ }
+  const script = new URL('proxy/ollama-cors-proxy.mjs', location.href).href;
+  const isDefault = /^http:\/\/(localhost|127\.0\.0\.1):11434$/.test(target);
+  $('#c-proxy-cmd').textContent = `curl -fsSLO ${script}\nnode ollama-cors-proxy.mjs${isDefault ? '' : ' --target ' + target}`;
 }
 
 function fillForm(c) {
   $('#c-url').value = c.url;
   $('#c-key').value = c.key || '';
   $('#c-label').value = c.label || '';
+  $('#c-proxy').checked = !!c.proxy;
+  if (c.proxyUrl) $('#c-proxy-url').value = c.proxyUrl;
+  paintProxyBox();
   $('#c-url').focus();
 }
 
@@ -77,7 +95,9 @@ async function onSubmit(e) {
   let list = [];
   try { list = await state.store.listConnections(); } catch { /* ignore */ }
   const existing = list.find(c => c.url === url);
-  const conn = { ...(existing || {}), id: existing?.id || uid(), url, key, label: label || existing?.label || '', created: existing?.created || Date.now() };
+  const proxy = $('#c-proxy').checked;
+  const proxyUrl = $('#c-proxy-url').value.trim() || 'http://localhost:11435';
+  const conn = { ...(existing || {}), id: existing?.id || uid(), url, key, label: label || existing?.label || '', created: existing?.created || Date.now(), proxy, proxyUrl: proxy ? proxyUrl : (existing?.proxyUrl || '') };
   if (!$('#c-savekey').checked) conn._noKey = true;
   connect(conn, { resume: false });
 }
@@ -114,7 +134,8 @@ export async function connect(conn, { resume }) {
     err.hidden = false;
     err.replaceChildren();
     err.append(`Could not connect to ${conn.url}: ${e.message}\n\nChecklist:\n• Is Ollama running and reachable from this browser?\n• CORS: start Ollama with OLLAMA_ORIGINS="*" (or this site's origin)\n• If this page is https, the API must be https too (browsers block mixed content)\n• If the server needs an API key, enter it\n\n`,
-      h('button', { class: 'btn sm primary', type: 'button', onclick: () => openCorsTester(conn.url, conn.key) }, '🩺 Diagnose with the CORS tester ↗'));
+      h('button', { class: 'btn sm primary', type: 'button', onclick: () => openCorsTester(conn.url, conn.key, conn.proxy ? conn.proxyUrl : '') }, '🩺 Diagnose with the CORS tester ↗'),
+      conn.proxy ? '' : h('button', { class: 'btn sm', type: 'button', style: { marginLeft: '6px' }, onclick: () => { fillForm(conn); $('#c-proxy').checked = true; paintProxyBox(); $('#c-proxy-box').scrollIntoView({ block: 'center' }); } }, 'Use CORS proxy instead'));
   } finally {
     buttons.forEach(b => { b.disabled = false; });
     $('#c-go').textContent = 'Connect';

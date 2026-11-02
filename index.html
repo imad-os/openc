@@ -52,6 +52,16 @@
         <label class="fld">Label <em>(optional)</em><input id="c-label" placeholder="Home PC"></label>
       </div>
       <label class="check"><input type="checkbox" id="c-savekey" checked> Save the API key with this server</label>
+      <label class="check"><input type="checkbox" id="c-proxy"> Use CORS proxy <span class="dim small">(no need to change OLLAMA_ORIGINS)</span></label>
+      <div id="c-proxy-box" class="stack proxy-box" hidden>
+        <label class="fld">Proxy URL<input id="c-proxy-url" placeholder="http://localhost:11435" value="http://localhost:11435"></label>
+        <div class="dim small">Run the proxy on the computer with Ollama (Node 18+, no install):</div>
+        <pre class="cmd" id="c-proxy-cmd"></pre>
+        <div class="row small">
+          <a href="proxy/ollama-cors-proxy.mjs" download="ollama-cors-proxy.mjs">⬇ Download ollama-cors-proxy.mjs</a>
+          <span class="dim">· add <code>--host 0.0.0.0</code> to use it from other devices · <code>{url}</code> templates of other proxies work too</span>
+        </div>
+      </div>
       <div class="row">
         <button class="btn primary" id="c-go" type="submit" style="flex:1">Connect</button>
         <button class="btn" id="c-cors" type="button" title="Open the CORS tester in a new tab to diagnose connection problems">🩺 Test CORS ↗</button>

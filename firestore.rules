@@ -37,9 +37,10 @@ service cloud.firestore {
     }
 
     function validConnection() {
-      return onlyKeys(['url', 'key', 'label', 'created', 'lastUsed', 'lastModel'])
+      return onlyKeys(['url', 'key', 'label', 'created', 'lastUsed', 'lastModel', 'proxy', 'proxyUrl'])
         && hasKeys(['url']) && isUrl(data().url)
         && optStr('key', 4096) && optStr('label', 120) && optStr('lastModel', 300)
+        && optBool('proxy') && optStr('proxyUrl', 2048)
         && optTime('created') && optTime('lastUsed');
     }
 

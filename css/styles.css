@@ -310,6 +310,10 @@ main { display: flex; flex-direction: column; min-width: 0; min-height: 0 }
 .fsum { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 10px; font-size: 0.821rem; color: var(--dim) }
 @media (hover: none) { .fa { display: inline-flex } }
 
+/* CORS proxy box on the servers screen */
+.proxy-box { border: 1px dashed var(--line2); border-radius: 10px; padding: 10px 12px }
+pre.cmd { margin: 0; background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; white-space: pre-wrap; word-break: break-all; user-select: all; -webkit-user-select: all }
+
 /* segmented controls (settings) */
 .seg { display: flex; flex-wrap: wrap; gap: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; width: fit-content; max-width: 100% }
 .seg button { background: var(--p2); border: 0; border-right: 1px solid var(--line); padding: 6px 12px; cursor: pointer; color: var(--dim); font-size: 0.893rem }

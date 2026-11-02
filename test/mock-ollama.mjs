@@ -8,7 +8,8 @@ const MODELS = [
   { name: 'mock-old:7b', size: 4e9, modified_at: '2026-07-01T00:00:00Z', details: { family: 'llama', parameter_size: '7.2B', quantization_level: 'Q4_K_M' } }, // no capabilities → /api/show
 ];
 
-const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'GET,POST,OPTIONS' };
+// NOCORS=1 simulates a stock Ollama that does not allow other websites.
+const cors = process.env.NOCORS ? {} : { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'GET,POST,OPTIONS' };
 const call = (name, args) => ({ function: { name, arguments: args } });
 
 let stallCount = 0;

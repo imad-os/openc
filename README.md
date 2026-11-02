@@ -50,6 +50,17 @@ Ollama must allow the page's origin:
 OLLAMA_ORIGINS="*" ollama serve
 ```
 
+**No config change option:** tick **Use CORS proxy** when adding a server and run the bundled proxy on the computer with Ollama:
+
+```bash
+curl -fsSLO https://<where you host the app>/proxy/ollama-cors-proxy.mjs
+node ollama-cors-proxy.mjs                    # → http://localhost:11435, forwards to http://127.0.0.1:11434
+node ollama-cors-proxy.mjs --host 0.0.0.0     # reachable from your phone / other devices
+node ollama-cors-proxy.mjs --target http://192.168.1.20:11434 --origin https://imad-os.github.io
+```
+
+It's a single Node 18+ file with no dependencies. It streams replies and stops generating when you press Stop. It only forwards to your target, private or local addresses, or hosts you `--allow`.
+
 Not connecting? Click **🩺 Test CORS** on the servers screen, or open `cors-test.html`. It tells apart "server down", "CORS blocked", "mixed content" and "bad API key", and shows the exact `OLLAMA_ORIGINS` / `OLLAMA_HOST` commands for Linux, macOS, Windows and Docker. It also has a speed test (time to first token, tokens/s).
 
 If the page is served over **https**, the Ollama URL must also be https, because browsers block mixed content. A reverse proxy or tunnel works.

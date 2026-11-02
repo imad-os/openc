@@ -1,0 +1,45 @@
+// Proxy end-to-end test: NOCORS=1 node test/mock-ollama.mjs 11570 & node proxy/ollama-cors-proxy.mjs --port 11571 --target http://localhost:11570 & python3 -m http.server 8770 & node test/proxy-e2e.mjs
+import { chromium } from 'playwright';
+const APP = 'http://localhost:8770/', API = 'http://localhost:11570', PROXY = 'http://localhost:11571';
+const ok = (c, m) => { if (!c) throw new Error('FAIL ' + m); console.log('  ✓', m); };
+const b = await chromium.launch(); const ctx = await b.newContext(); const p = await ctx.newPage();
+const errs = []; p.on('pageerror', e => errs.push(e.message));
+await p.goto(APP);
+await p.waitForSelector('#v-connect:not([hidden]), #a-local:visible', { timeout: 15000 });
+if (await p.isVisible('#a-local')) await p.click('#a-local');
+await p.waitForSelector('#v-connect:not([hidden])');
+await p.fill('#c-url', API); await p.click('#c-go');
+await p.waitForSelector('#c-err:not([hidden])');
+ok((await p.textContent('#c-err')).includes('Use CORS proxy'), 'direct connection blocked by CORS, error suggests the proxy');
+await p.click('#c-err button:has-text("Use CORS proxy instead")');
+ok(await p.isChecked('#c-proxy') && await p.isVisible('#c-proxy-box'), 'checkbox ticked, proxy box shown');
+ok((await p.textContent('#c-proxy-cmd')).includes('node ollama-cors-proxy.mjs --target http://localhost:11570'), 'shows the exact proxy command for this server');
+await p.fill('#c-proxy-url', PROXY);
+await p.click('#c-go');
+await p.waitForSelector('#v-models:not([hidden]) .mcard', { timeout: 15000 });
+ok(true, 'models listed through the proxy');
+await p.click('.mcard:has-text("mock-coder")');
+await p.selectOption('#perm', 'auto');
+await p.fill('#inp', 'hi'); await p.press('#inp', 'Enter');
+await p.waitForSelector('#chat .runfoot', { timeout: 20000 });
+ok((await p.textContent('#chat')).includes('Hello from chat mode.'), 'streaming chat works through the proxy');
+await p.click('#b-new');
+await p.fill('#inp', 'build a snake game'); await p.press('#inp', 'Enter');
+await p.waitForSelector('#chat .runfoot', { timeout: 30000 });
+ok((await p.textContent('#chat')).includes('All done.'), 'full agent run (tools) through the proxy');
+await p.click('#b-servers');
+await p.waitForSelector('.conn-main');
+ok((await p.textContent('.conn-main')).includes('via proxy ' + PROXY), 'saved server remembers the proxy');
+
+const t = await ctx.newPage();
+await t.goto(APP + 'cors-test.html?url=' + encodeURIComponent(API));
+await t.waitForSelector('#verdict.bad', { timeout: 30000 });
+ok((await t.textContent('#fix')).includes('ollama-cors-proxy.mjs'), 'tester without proxy: CORS blocked, suggests the proxy');
+await t.check('#useProxy'); await t.fill('#proxy', PROXY); await t.click('#go');
+await t.waitForSelector('#verdict.ok', { timeout: 30000 });
+ok((await t.textContent('#verdict')).includes('through the CORS proxy'), 'tester with proxy: all good');
+await t.click('#speedGo'); await t.waitForSelector('#speedOut .check.pass', { timeout: 30000 });
+ok(true, 'speed test streams through the proxy');
+await b.close();
+if (errs.length) { console.log(errs); process.exit(1); }
+console.log('PROXY OK');
