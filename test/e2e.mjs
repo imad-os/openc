@@ -218,6 +218,35 @@ ok(true, 'switched back to the running conversation from the list');
 await page.waitForFunction(() => document.querySelector('#chat').textContent.includes('Slow job finished.'), null, { timeout: 20000 });
 ok(await page.isHidden('#running'), 'background run finished; indicator gone');
 
+// scrolling while the agent writes: follow only at the bottom
+await page.click('#b-new');
+await page.fill('#inp', 'long story');
+await page.press('#inp', 'Enter');
+const chatEl = page.locator('#chat');
+await page.waitForFunction(() => { const c = document.querySelector('#chat'); return c.scrollHeight > c.clientHeight * 2; }, null, { timeout: 15000 });
+const gap = () => page.evaluate(() => { const c = document.querySelector('#chat'); return c.scrollHeight - c.scrollTop - c.clientHeight; });
+ok(await gap() < 30, 'follows new output while at the bottom');
+const box = await chatEl.boundingBox();
+await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+await page.mouse.wheel(0, -60);                       // just a little
+await page.waitForTimeout(250);
+const top1 = await page.evaluate(() => document.querySelector('#chat').scrollTop);
+await page.waitForTimeout(1200);                      // output keeps streaming
+const top2 = await page.evaluate(() => document.querySelector('#chat').scrollTop);
+ok(Math.abs(top2 - top1) < 2 && await gap() > 100, `a small scroll up stops following (stayed at ${Math.round(top2)}, ${Math.round(await gap())}px above the end)`);
+ok(await page.isVisible('#chat .jump'), '"Jump to latest" appears');
+await page.mouse.wheel(0, -400);
+await page.waitForTimeout(300);
+ok(await page.evaluate(() => document.querySelector('#chat').scrollTop) < top2, 'can keep scrolling up freely while it writes');
+await page.click('#chat .jump');
+await page.waitForTimeout(600);
+ok(await gap() < 30 && await page.isHidden('#chat .jump'), 'Jump to latest resumes following');
+await page.mouse.wheel(0, -200); await page.waitForTimeout(300);
+await page.evaluate(() => { const c = document.querySelector('#chat'); c.scrollTop = c.scrollHeight; });
+await page.mouse.wheel(0, 200); await page.waitForTimeout(800);
+ok(await gap() < 30, 'scrolling back to the bottom resumes following');
+await page.waitForSelector('#chat .runfoot', { timeout: 30000 });
+
 // display settings
 await page.click('#b-display');
 await page.click('.seg button:has-text("Light")');

@@ -35,6 +35,9 @@ function script(body) {
     stallCount++;
     return stallCount === 1 ? { thinking: 'Starting to think about it…', stallAfter: true } : { content: 'Recovered after the stall.' };
   }
+  if (last.role === 'user' && /long story/i.test(last.content)) {
+    return { content: Array.from({ length: 160 }, (_, i) => `Line ${i + 1} of a long streamed answer.\n\n`).join(' '), slowCalls: true };
+  }
   if (last.role === 'user' && /slow job/i.test(last.content)) {
     return { thinking: '**Planning the work** ' + 'step '.repeat(30), content: 'Slow job finished.', delay: 120 };
   }

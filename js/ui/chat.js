@@ -46,12 +46,38 @@ function toolPreview(name, a = {}) {
 }
 
 /** Auto-scroll that sticks to the bottom unless the user scrolled up. */
+/**
+ * Auto-scroll that follows new output only while you are at the bottom.
+ * Any scroll up by you (wheel, touch, keys, scrollbar) stops following at once;
+ * scrolling back to the very bottom (or "Jump to latest") resumes it.
+ * Content changes never count as your scrolling, so streaming can't "steal" the position.
+ */
 function scroller(el) {
-  if (!el._scroll) {
-    el._stick = true;
-    el.addEventListener('scroll', () => { el._stick = el.scrollHeight - el.scrollTop - el.clientHeight < 160; });
-    el._scroll = force => { if (force || el._stick) { el.scrollTop = el.scrollHeight; if (force) el._stick = true; } };
-  }
+  if (el._scroll) return el._scroll;
+  let stick = true, lastTop = el.scrollTop, userAt = 0, programmatic = false;
+  const jump = h('button', { class: 'jump', type: 'button', hidden: true, onclick: () => el._scroll(true) }, '↓ Jump to latest');
+  el._jump = jump;
+  const atBottom = () => el.scrollHeight - el.scrollTop - el.clientHeight <= 24;
+  const paintJump = () => { jump.hidden = stick || atBottom(); };
+  const userInput = () => { userAt = Date.now(); };
+  for (const ev of ['wheel', 'touchstart', 'touchmove', 'pointerdown']) el.addEventListener(ev, userInput, { passive: true });
+  document.addEventListener('keydown', e => {
+    if (['PageUp', 'PageDown', 'ArrowUp', 'ArrowDown', 'Home', 'End', ' '].includes(e.key) && !e.target.closest?.('input, textarea, select, [contenteditable]')) userInput();
+  });
+  el.addEventListener('scroll', () => {
+    if (programmatic) { programmatic = false; lastTop = el.scrollTop; return; }
+    const byUser = Date.now() - userAt < 1500;
+    if (byUser && el.scrollTop < lastTop - 1) stick = false; // moved up even a little: stop following
+    if (byUser && atBottom()) stick = true;                    // back at the bottom: follow again
+    lastTop = el.scrollTop;
+    paintJump();
+  }, { passive: true });
+  el._scroll = force => {
+    if (force) stick = true;
+    if (stick && !atBottom()) { programmatic = true; el.scrollTop = el.scrollHeight; lastTop = el.scrollTop; requestAnimationFrame(() => { programmatic = false; }); }
+    paintJump();
+  };
+  el._isFollowing = () => stick;
   return el._scroll;
 }
 
@@ -71,7 +97,7 @@ export function createView(root, scrollEl = root) {
       return el;
     },
     note(text, cls = '') { const el = h('div', { class: 'note ' + cls }, text); root.append(el); down(); return el; },
-    error(text) { const el = h('div', { class: 'errline' }, text); root.append(el); down(true); return el; },
+    error(text) { const el = h('div', { class: 'errline' }, text); root.append(el); down(); return el; },
     block(label) { return makeBlock(root, label, down, scrollEl); },
     footer(run, answer) {
       const files = run.files || [];
@@ -226,7 +252,7 @@ function makeToolCard(call, down, scrollEl) {
           h('button', { class: 'btn sm', type: 'button', title: kind === 'edit' ? 'Auto-accept file edits from now on' : 'Auto-accept everything from now on', onclick: () => done('always') }, kind === 'edit' ? 'Always allow edits' : 'Always allow'),
           h('button', { class: 'btn danger sm', type: 'button', onclick: () => done('deny') }, 'Deny')));
         signal?.addEventListener('abort', () => done('deny'), { once: true });
-        down(true);
+        down();
       });
     },
     ask(question, options, signal) {
@@ -240,8 +266,8 @@ function makeToolCard(call, down, scrollEl) {
           h('form', { class: 'ask-row', onsubmit: e => { e.preventDefault(); if (input.value.trim()) done(input.value.trim()); } },
             input, h('button', { class: 'btn sm primary' }, 'Answer'))));
         signal?.addEventListener('abort', () => done('(no answer: the run was stopped)'), { once: true });
-        setTimeout(() => input.focus());
-        down(true);
+        setTimeout(() => input.focus({ preventScroll: true }));
+        down();
       });
     },
   };
@@ -285,7 +311,8 @@ export function threadView(session) {
 /** Put a conversation's view on screen. */
 export function showThread(view) {
   const chat = $('#chat');
-  if (chat.firstElementChild !== view.root) chat.replaceChildren(view.root);
+  scroller(chat);
+  if (chat.firstElementChild !== view.root) chat.replaceChildren(view.root, chat._jump);
 }
 
 export const dropThread = id => threads.delete(id);
