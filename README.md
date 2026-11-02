@@ -50,6 +50,8 @@ Ollama must allow the page's origin:
 OLLAMA_ORIGINS="*" ollama serve
 ```
 
+Not connecting? Click **🩺 Test CORS** on the servers screen, or open `cors-test.html`. It tells apart "server down", "CORS blocked", "mixed content" and "bad API key", and shows the exact `OLLAMA_ORIGINS` / `OLLAMA_HOST` commands for Linux, macOS, Windows and Docker. It also has a speed test (time to first token, tokens/s).
+
 If the page is served over **https**, the Ollama URL must also be https, because browsers block mixed content. A reverse proxy or tunnel works.
 
 ## Internet access

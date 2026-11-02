@@ -52,7 +52,10 @@
         <label class="fld">Label <em>(optional)</em><input id="c-label" placeholder="Home PC"></label>
       </div>
       <label class="check"><input type="checkbox" id="c-savekey" checked> Save the API key with this server</label>
-      <button class="btn primary" id="c-go" type="submit">Connect</button>
+      <div class="row">
+        <button class="btn primary" id="c-go" type="submit" style="flex:1">Connect</button>
+        <button class="btn" id="c-cors" type="button" title="Open the CORS tester in a new tab to diagnose connection problems">🩺 Test CORS ↗</button>
+      </div>
     </form>
     <div id="c-err" class="msgbox err" hidden></div>
   </div>
