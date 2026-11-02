@@ -73,13 +73,14 @@ export function setModelMeta(name, patch) {
   emit('model-meta', name);
 }
 
-export function recordModelStats(name, inc) {
-  if (!state.conn) return;
-  const m = (state.modelMeta[name] ||= { url: state.conn.url, model: name });
+export function recordModelStats(name, inc, conn = state.conn) {
+  if (!conn) return;
+  const same = conn.url === state.conn?.url;
+  const m = same ? (state.modelMeta[name] ||= { url: conn.url, model: name }) : { url: conn.url, model: name };
   const counters = {};
   for (const k of COUNTERS) if (inc[k]) { counters[k] = inc[k]; m[k] = (m[k] || 0) + inc[k]; }
   m.lastUsed = Date.now();
-  state.store.updateModelMeta(state.conn.url, name, { lastUsed: m.lastUsed }, counters).catch(e => console.warn('stats not saved', e));
+  state.store.updateModelMeta(conn.url, name, { lastUsed: m.lastUsed }, counters).catch(e => console.warn('stats not saved', e));
   emit('model-meta', name);
 }
 

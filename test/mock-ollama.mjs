@@ -11,11 +11,24 @@ const MODELS = [
 const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'GET,POST,OPTIONS' };
 const call = (name, args) => ({ function: { name, arguments: args } });
 
+let stallCount = 0;
+
 function script(body) {
   const msgs = body.messages;
   const last = msgs[msgs.length - 1];
   const tools = msgs.filter(m => m.role === 'tool');
   const lastTool = tools[tools.length - 1];
+  if (last.role === 'user' && /stall test/i.test(last.content)) {
+    stallCount++;
+    return stallCount === 1 ? { thinking: 'Starting to think about it…', stallAfter: true } : { content: 'Recovered after the stall.' };
+  }
+  if (last.role === 'user' && /slow job/i.test(last.content)) {
+    return { thinking: '**Planning the work** ' + 'step '.repeat(30), content: 'Slow job finished.', delay: 120 };
+  }
+  if (/read the docs/i.test(msgs.find(m => m.role === 'user')?.content || '') && body.tools) {
+    if (last.role === 'user') return { content: '', tool_calls: [call('web_fetch', { url: `http://localhost:${PORT}/docs` })] };
+    if (last.role === 'tool') return { content: 'The docs say: ' + (last.content.includes('SDK_MAGIC_42') ? 'SDK_MAGIC_42 found' : 'nothing') };
+  }
   if (!body.tools) return { content: 'Hello from **chat** mode.' };
   if (last.role === 'user' && /demo/i.test(last.content)) {
     return {
@@ -57,6 +70,7 @@ http.createServer((req, res) => {
   req.on('data', c => { raw += c; });
   req.on('end', async () => {
     const json = (o, code = 200) => { res.writeHead(code, { ...cors, 'content-type': 'application/json' }); res.end(JSON.stringify(o)); };
+    if (req.url === '/docs') { res.writeHead(200, { ...cors, 'content-type': 'text/html' }); return res.end('<html><head><title>Mock SDK docs</title></head><body><nav>menu</nav><main><h1>Mock SDK</h1><p>Use <code>client.go()</code>. Token: SDK_MAGIC_42</p><pre>npm i mock-sdk</pre></main></body></html>'); }
     if (req.url === '/api/tags') return json({ models: MODELS });
     if (req.url === '/api/ps') return json({ models: [{ name: 'mock-coder:27b' }] });
     if (req.url === '/api/show') return json({ capabilities: ['completion', 'tools'], model_info: { 'llama.context_length': 32768 } });
@@ -67,7 +81,8 @@ http.createServer((req, res) => {
     res.writeHead(200, { ...cors, 'content-type': 'application/x-ndjson' });
     const send = o => res.write(JSON.stringify({ model: body.model, ...o }) + '\n');
     const wait = ms => new Promise(r2 => setTimeout(r2, ms));
-    if (r.thinking) for (const w of r.thinking.split(/(?<= )/)) { send({ message: { role: 'assistant', content: '', thinking: w }, done: false }); await wait(5); }
+    if (r.thinking) for (const w of r.thinking.split(/(?<= )/)) { send({ message: { role: 'assistant', content: '', thinking: w }, done: false }); await wait(r.delay || 5); }
+    if (r.stallAfter) { await wait(8000); try { res.end(); } catch {} return; }
     for (const w of (r.content || '').split(/(?<= )/)) { if (w) send({ message: { role: 'assistant', content: w }, done: false }); await wait(5); }
     if (r.tool_calls) send({ message: { role: 'assistant', content: '', tool_calls: r.tool_calls }, done: false });
     send({ message: { role: 'assistant', content: '' }, done: true, done_reason: 'stop', prompt_eval_count: 900, eval_count: 120, eval_duration: 2e9 });

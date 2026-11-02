@@ -8,6 +8,8 @@ import { paintSessions, renderSession, draftSession, newSession } from './sessio
 import { refreshFiles } from './files.js';
 import { openSettings, openAgents, openAccount } from './modals.js';
 import { showConnect } from './connect.js';
+import { openRunningList, isRunning } from './runs.js';
+import { openSession } from './sessions.js';
 
 let lastStats = null;
 
@@ -22,7 +24,8 @@ export function initWorkspace() {
   for (const id of ['#left', '#right']) new MutationObserver(syncScrim).observe($(id), { attributes: true, attributeFilter: ['class'] });
   $('#b-new').addEventListener('click', newSession);
   $('#b-models').addEventListener('click', showModels);
-  $('#b-servers').addEventListener('click', () => { if (state.busy) return toast('Stop the agent first'); showConnect(); });
+  $('#b-servers').addEventListener('click', showConnect);
+  $('#running').addEventListener('click', e => openRunningList(e.currentTarget, openSession));
   $('#b-agents').addEventListener('click', openAgents);
   $('#b-set').addEventListener('click', () => openSettings());
   $('#b-display').addEventListener('click', () => openSettings('display'));
@@ -33,6 +36,7 @@ export function initWorkspace() {
   on('model-meta', updateTop);
   on('agents', () => { paintAgents(); updateStatus(); });
   on('llm-stats', s => { lastStats = s; updateStatus(); });
+  on('session', s => { lastStats = s?._lastStats || null; updateStatus(); });
   on('busy', updateStatus);
   on('user', paintAccount);
 }
@@ -96,7 +100,7 @@ export function updateStatus() {
   const agent = currentAgent();
   const left = [h('b', {}, agent?.name || ''), ' · ' + (state.model || 'no model')];
   if (caps.length && !caps.includes('tools') && agent?.tools?.length) left.push(h('span', { class: 'warn' }, ' · model has no tool calling (chat only)'));
-  if (state.busy) left.push(' · working… (Esc to stop)');
+  if (isRunning(state.session?.id)) left.push(' · running (Esc to stop)');
   $('#st-l').replaceChildren(...left);
 
   const right = [];
@@ -124,7 +128,7 @@ function openModelPicker(anchor) {
     const list = h('div', { class: 'pop-list' });
     const row = m => h('div', {
       class: 'pop-row' + (m.name === state.model ? ' on' : ''),
-      onclick: () => { close(); if (state.busy) return toast('Stop the agent before switching models'); pickModel(m.name, { stay: true }); },
+      onclick: () => { close(); pickModel(m.name, { stay: true }); },
     },
     h('div', { class: 'pr-main' }, h('span', { class: 'pr-name' }, m.name), ...(m.caps || []).filter(c => c !== 'completion').map(c => capTag(c, true))),
     h('div', { class: 'pr-sub' }, strengthEl(m.name), starsEl(m.name, { readonly: true }), h('span', { class: 'dim small' }, statsText(m.name, true))));

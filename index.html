@@ -114,6 +114,7 @@
     <div id="top">
       <button class="btn sm tbtn" id="t-left" type="button" aria-label="Sessions">☰</button>
       <div class="grow ellipsis" id="title">New session</div>
+      <button class="running-btn" id="running" type="button" title="Conversations with an agent still running" hidden></button>
       <button class="mchip" id="mchip" type="button" title="Switch model"></button>
       <select id="perm" title="What the agent may do without asking">
         <option value="ask">Ask before changes</option>
@@ -123,6 +124,7 @@
       <button class="btn sm tbtn" id="t-right" type="button">Files</button>
     </div>
     <div id="chat"></div>
+    <div id="runbar" class="runbar" hidden></div>
     <div id="composer">
       <div class="cbox">
         <div id="atts"></div>
@@ -150,10 +152,11 @@
         <button class="btn sm" id="f-up" type="button">Upload</button>
         <button class="btn sm" id="f-open" type="button">Open folder</button>
         <button class="btn sm" id="f-virt" type="button" hidden>Browser workspace</button>
+        <button class="btn sm" id="f-zip" type="button" title="Download every file as a .zip">⬇ Zip all</button>
         <button class="btn sm" id="f-ref" type="button">Refresh</button>
         <input type="file" id="f-in" multiple hidden>
       </div>
-      <div class="dim small pad-x" id="fs-label"></div>
+      <div class="fsum"><span id="fs-label"></span><span id="fs-count"></span></div>
       <div id="tree"></div>
     </div>
     <div id="p-todos" class="rbody" hidden></div>

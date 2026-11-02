@@ -3,41 +3,67 @@
 // Each step: build the system prompt → fit the context (prune, compact) → stream the model →
 // recover text-written tool calls → run tools (read-only ones in parallel, edits sequentially,
 // with approvals) → feed results back. Stops when the model answers without tools, with
-// safeguards: loop detection, empty-reply nudge, auto-continue on unfinished todos, step limit.
-import { state, emit, modelCaps, subagents } from '../core/state.js';
-import { chatStream, HttpError } from '../core/ollama.js';
+// safeguards: loop detection, empty-reply nudge, auto-continue on unfinished todos, step limit,
+// and a stall watchdog (no tokens for too long → retry the step).
+//
+// A run captures its server, model list, model and workspace when it starts, so it keeps
+// working in the background while you switch conversations, models or servers.
+// Live progress is written to run.status (read by the UI every second).
+import { state, emit, subagents } from '../core/state.js';
+import { chatStream, HttpError, StallError } from '../core/ollama.js';
 import { TOOLS, toolSchemas } from './tools.js';
 import { extractToolCalls } from './parse.js';
 import { prepareMessages, estimateTokens, compactThread } from './context.js';
 import { parseArgs, clip } from '../util/misc.js';
+import { toolTitle } from '../ui/chat.js';
 
 /** Per-run tracker, shared with subagents. */
-export function createRun() {
-  return { started: Date.now(), steps: 0, toolCalls: 0, toolErrors: 0, changes: new Map(), read: new Set(), byModel: {} };
+export function createRun({ conn = state.conn, model = state.model, fs = state.fs, models = state.models } = {}) {
+  const now = Date.now();
+  return {
+    started: now, steps: 0, toolCalls: 0, toolErrors: 0, changes: new Map(), read: new Set(), byModel: {},
+    conn, model, fs, models,
+    status: { phase: 'starting', detail: '', since: now, lastActivity: now, step: 0, chars: 0, firstTokenAt: 0, retries: 0, agent: '', depth: 0 },
+    retryStep: null, // set by the runner; the UI calls it to abort and retry the current model request
+  };
 }
 
-const resolveModel = agent => (agent.model && state.models.some(m => m.name === agent.model) ? agent.model : state.model);
-const agentTools = (agent, depth) => (agent.tools || []).filter(n => TOOLS[n] && !(n === 'task' && (depth > 0 || !subagents().length)));
+/** Update the live status. phase: waiting | thinking | writing | calling | tool | approval | question | compacting | retrying | done */
+export function setPhase(run, phase, detail = '', extra = {}) {
+  const now = Date.now();
+  Object.assign(run.status, { phase, detail, since: now, lastActivity: now }, extra);
+  emit('run-status', run);
+}
+
+const capsOf = (run, model) => run.models.find(m => m.name === model)?.caps || [];
+const resolveModel = (agent, run) => (agent.model && run.models.some(m => m.name === agent.model) ? agent.model : run.model);
+const agentTools = (agent, depth) => (agent.tools || []).filter(n => TOOLS[n]
+  && !(n === 'task' && (depth > 0 || !subagents().length))
+  && !(TOOLS[n].web && !state.settings.webEnabled));
 const autoApproved = perm => state.settings.perm === 'auto' || (state.settings.perm === 'edits' && perm === 'edit');
 
-let fileCache = { t: 0, list: [] };
-async function workspaceFiles() {
-  if (Date.now() - fileCache.t > 2000) {
-    try { fileCache = { t: Date.now(), list: await state.fs.list() }; } catch { fileCache = { t: Date.now(), list: [] }; }
-  }
-  return fileCache.list;
+const fileCache = new WeakMap(); // fs -> { t, list }
+async function workspaceFiles(fs) {
+  const c = fileCache.get(fs);
+  if (c && Date.now() - c.t < 2000) return c.list;
+  let list = [];
+  try { list = await fs.list(); } catch { /* ignore */ }
+  fileCache.set(fs, { t: Date.now(), list });
+  return list;
 }
-export const invalidateFileCache = () => { fileCache.t = 0; };
+export const invalidateFileCache = () => { if (state.fs) fileCache.delete(state.fs); };
 
-async function systemPrompt(agent, thread, names) {
-  const files = await workspaceFiles();
+async function systemPrompt(agent, thread, names, fs) {
+  const files = await workspaceFiles(fs);
   let rules = '';
-  if (files.includes('AGENTS.md')) { try { rules = clip(await state.fs.read('AGENTS.md'), 6000); } catch { /* ignore */ } }
+  if (files.includes('AGENTS.md')) { try { rules = clip(await fs.read('AGENTS.md'), 6000); } catch { /* ignore */ } }
+  const web = names.includes('web_fetch') || names.includes('web_search');
   const parts = [
     agent.prompt.trim(),
     '# Environment\n' +
-      `- Workspace: ${state.fs.label}\n- Date: ${new Date().toDateString()}\n- Paths are relative to the workspace root and use "/".\n` +
-      (names.length ? `- Tools: ${names.join(', ')}` : '- No tools are available right now. Answer directly; if files would need changes, show the code in your reply.'),
+      `- Workspace: ${fs.label}\n- Date: ${new Date().toDateString()}\n- Paths are relative to the workspace root and use "/".\n` +
+      (names.length ? `- Tools: ${names.join(', ')}` : '- No tools are available right now. Answer directly; if files would need changes, show the code in your reply.') +
+      (web ? '\n- You have internet access: use web_search to find pages (official docs, SDK references, changelogs) and web_fetch to read them. Prefer official sources and cite the URLs you used.' : ''),
     `# Workspace files (${files.length})\n` + (files.length ? files.slice(0, 200).join('\n') + (files.length > 200 ? `\n… ${files.length - 200} more (use find_files)` : '') : '(empty)'),
   ];
   if (rules) parts.push('# Project instructions (AGENTS.md)\n' + rules);
@@ -50,39 +76,89 @@ function nudge(thread, view, text, label) {
   view.note('↻ ' + label, 'auto');
 }
 
+/** Stream one model request with a per-step controller that the UI can abort to retry. */
+async function requestStep(run, body, block, signal, prefix) {
+  const S = state.settings;
+  for (let attempt = 0; ; attempt++) {
+    const step = new AbortController();
+    const onAbort = () => step.abort();
+    signal.addEventListener('abort', onAbort, { once: true });
+    let manual = false;
+    run.retryStep = () => { manual = true; step.abort(); };
+    setPhase(run, 'waiting', `${prefix}sent ${fmtK(JSON.stringify(body.messages).length / 3.6)} tokens of context`, { chars: 0, firstTokenAt: 0 });
+    try {
+      return await chatStream(body, {
+        signal: step.signal,
+        conn: run.conn,
+        firstTokenTimeout: (S.firstTokenTimeout || 0) * 1000,
+        idleTimeout: (S.idleTimeout || 0) * 1000,
+        onRetry: (n, e) => setPhase(run, 'retrying', `${prefix}server error, retry ${n}: ${e.message}`),
+        onChunk: (m, acc) => {
+          const st = run.status;
+          const now = Date.now();
+          if (!st.firstTokenAt) st.firstTokenAt = now;
+          st.lastActivity = now;
+          st.chars = acc.thinking.length + acc.content.length;
+          const phase = m.tool_calls?.length ? 'calling' : m.content ? 'writing' : m.thinking ? 'thinking' : st.phase;
+          if (phase !== st.phase) { st.phase = phase; st.since = now; st.detail = prefix + (phase === 'calling' ? 'preparing tool calls' : ''); emit('run-status', run); }
+          if (acc.thinking) block.thinking(acc.thinking);
+          block.text(acc.content);
+        },
+      });
+    } catch (e) {
+      const stalled = e instanceof StallError || (manual && !signal.aborted);
+      if (!stalled || signal.aborted) throw e;
+      if (attempt >= (manual ? 5 : S.autoRetryStall ? 1 : 0)) throw new Error(`The model stopped responding (${e.message}). The server may be overloaded, out of memory, or the model got stuck.`);
+      block.reset();
+      run.status.retries++;
+      setPhase(run, 'retrying', `${prefix}${manual ? 'retrying on your request' : e.message + ', retrying the step'}`);
+    } finally {
+      signal.removeEventListener('abort', onAbort);
+      run.retryStep = null;
+    }
+  }
+}
+
+const fmtK = n => (n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(Math.round(n)));
+
 /**
  * Run an agent on a thread ({ messages, summary, summaryUpto }).
- * hooks: { persist(), getTodos(), setTodos(list), confirm(card, def) → bool, askUser(q, options, card) → string }
+ * hooks: { persist(), getTodos(), setTodos(list), confirm(card, def) → bool, askUser(q, options, card) → string, stats(s) }
  * Returns { text, finished }.
  */
 export async function runAgent({ agent, thread, view, signal, run, hooks = {}, depth = 0 }) {
   const S = state.settings;
-  const model = resolveModel(agent);
+  const model = resolveModel(agent, run);
   if (!model) throw new Error('No model selected');
-  const caps = modelCaps(model);
+  const caps = capsOf(run, model);
   let names = caps.length && !caps.includes('tools') ? [] : agentTools(agent, depth);
   let think = caps.includes('thinking') && S.think !== 'auto' ? (S.think === 'on' ? true : S.think === 'off' ? false : S.think) : undefined;
   const budget = Math.max(2048, Math.floor(S.num_ctx * 0.75) - 512);
   const canWrite = names.some(n => TOOLS[n].perm === 'edit');
   const label = agent.name + (depth ? ' · subagent' : '');
+  const prefix = depth ? `${agent.name}: ` : '';
   const stats = (run.byModel[model] ||= { requests: 0, evalTokens: 0, evalNs: 0, promptTokens: 0, toolCalls: 0, toolErrors: 0 });
   const loop = { history: [], strikes: 0, stop: false };
   const nudges = { empty: 0, todos: 0 };
+  const parentStep = run.status.step;
 
   for (let step = 0; step < S.maxSteps; step++) {
     run.steps++;
+    if (!depth) run.status.step = step + 1;
+    Object.assign(run.status, { agent: agent.name, depth, model, maxSteps: S.maxSteps });
 
     // 1) Fit the context window
-    let system = await systemPrompt(agent, thread, names);
+    let system = await systemPrompt(agent, thread, names, run.fs);
     let { msgs, tokens } = prepareMessages(thread, budget - estimateTokens(system));
     if (S.autoCompact && tokens + estimateTokens(system) > budget) {
       const note = view.note('Compacting context…', 'auto');
+      setPhase(run, 'compacting', prefix + 'summarizing older messages to fit the context window');
       try {
-        const n = await compactThread(thread, { model, budget: budget - estimateTokens(system), signal, num_ctx: S.num_ctx, think: think === undefined ? undefined : false });
+        const n = await compactThread(thread, { model, conn: run.conn, budget: budget - estimateTokens(system), signal, num_ctx: S.num_ctx, think: think === undefined ? undefined : false });
         note.textContent = n ? `↻ Context compacted: ${n} older messages summarized` : 'Context is large and could not be compacted further';
         if (n) {
           await hooks.persist?.();
-          system = await systemPrompt(agent, thread, names);
+          system = await systemPrompt(agent, thread, names, run.fs);
           ({ msgs, tokens } = prepareMessages(thread, budget - estimateTokens(system)));
         }
       } catch (e) {
@@ -91,7 +167,7 @@ export async function runAgent({ agent, thread, view, signal, run, hooks = {}, d
       }
     }
 
-    // 2) Ask the model (streaming)
+    // 2) Ask the model (streaming, with stall watchdog)
     const block = view.block(label);
     const body = {
       model,
@@ -103,10 +179,7 @@ export async function runAgent({ agent, thread, view, signal, run, hooks = {}, d
 
     let res;
     try {
-      res = await chatStream(body, {
-        signal,
-        onChunk: (_, acc) => { if (acc.thinking) block.thinking(acc.thinking); block.text(acc.content); },
-      });
+      res = await requestStep(run, body, block, signal, prefix);
     } catch (e) {
       block.finish();
       if (e instanceof HttpError && body.tools && /does not support tools|tools? (are|is) not supported/i.test(e.detail)) {
@@ -125,7 +198,7 @@ export async function runAgent({ agent, thread, view, signal, run, hooks = {}, d
       stats.evalTokens += res.stats.eval_count || 0;
       stats.evalNs += res.stats.eval_duration || 0;
       stats.promptTokens += res.stats.prompt_eval_count || 0;
-      if (!depth) emit('llm-stats', {
+      if (!depth) hooks.stats?.({
         prompt: res.stats.prompt_eval_count || 0,
         output: res.stats.eval_count || 0,
         tps: res.stats.eval_duration ? res.stats.eval_count / (res.stats.eval_duration / 1e9) : 0,
@@ -164,11 +237,12 @@ export async function runAgent({ agent, thread, view, signal, run, hooks = {}, d
           `Continuing: ${open.length} unfinished todo${open.length > 1 ? 's' : ''}`);
         continue;
       }
+      if (depth) run.status.step = parentStep;
       return { text: content, finished: true };
     }
 
     // 5) Execute tools
-    await executeCalls(calls, block, { agent, names, run, stats, loop, hooks, signal, depth, thread });
+    await executeCalls(calls, block, { agent, names, run, stats, loop, hooks, signal, depth, thread, prefix });
     block.finish();
     await hooks.persist?.();
     if (loop.stop) {
@@ -225,12 +299,14 @@ async function executeOne(call, card, c) {
 
   if (def.perm && !autoApproved(def.perm)) {
     card.status('pending');
+    setPhase(c.run, 'approval', `${c.prefix}${name} ${toolTitle(name, args)}`, { card });
     const ok = c.hooks.confirm ? await c.hooks.confirm(card, def) : true;
     if (c.signal.aborted) throw new DOMException('Aborted', 'AbortError');
     if (!ok) return fail('Denied by the user. Do not retry this exact action; choose another approach or ask the user what they want.');
   }
 
   card.status('running');
+  setPhase(c.run, name === 'ask_user' ? 'question' : 'tool', `${c.prefix}${name} ${toolTitle(name, args)}`.trim(), { card });
   if (name === 'task') card.open();
   try {
     let out = String((await def.run(args, toolContext(c, card))) ?? '');
@@ -247,10 +323,10 @@ async function executeOne(call, card, c) {
 
 function toolContext(c, card) {
   return {
-    fs: state.fs,
+    fs: c.run.fs,
     signal: c.signal,
     tracker: c.run,
-    changed: p => { invalidateFileCache(); emit('fs-changed', p); },
+    changed: p => { fileCache.delete(c.run.fs); emit('fs-changed', p); },
     setTodos: list => c.hooks.setTodos?.(list),
     askUser: (q, options) => (c.hooks.askUser ? c.hooks.askUser(q, options, card) : Promise.resolve('(no user available: decide yourself)')),
     spawn: (agentName, prompt) => spawnSubagent(agentName, prompt, card, c),

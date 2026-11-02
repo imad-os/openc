@@ -43,6 +43,8 @@ export class VirtualFS {
   async list() { return Object.keys(this.files).sort(); }
   async exists(p) { return Object.prototype.hasOwnProperty.call(this.files, p); }
   async read(p) { if (!(await this.exists(p))) throw new Error('File not found: ' + p); return this.files[p]; }
+  async readBytes(p) { return new TextEncoder().encode(await this.read(p)); }
+  async size(p) { return new Blob([await this.read(p)]).size; }
   async write(p, content) { if (!p) throw new Error('Empty path'); this.files[p] = String(content); this.save(); }
   async remove(p) { if (!(await this.exists(p))) throw new Error('File not found: ' + p); delete this.files[p]; this.save(); }
   async move(from, to) { const c = await this.read(from); this.files[to] = c; delete this.files[from]; this.save(); }
@@ -86,6 +88,11 @@ export class DirFS {
     try { return await (await (await this.fileHandle(p, false)).getFile()).text(); }
     catch { throw new Error('File not found: ' + p); }
   }
+  async readBytes(p) {
+    try { return new Uint8Array(await (await (await this.fileHandle(p, false)).getFile()).arrayBuffer()); }
+    catch { throw new Error('File not found: ' + p); }
+  }
+  async size(p) { try { return (await (await this.fileHandle(p, false)).getFile()).size; } catch { return 0; } }
   async write(p, content) {
     if (!p) throw new Error('Empty path');
     this.cache = null;

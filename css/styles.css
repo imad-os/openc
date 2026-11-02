@@ -155,7 +155,8 @@ main { display: flex; flex-direction: column; min-width: 0; min-height: 0 }
 
 /* chat */
 #chat { flex: 1; overflow: auto; padding: 18px; display: flex; flex-direction: column; gap: 14px }
-#chat > * { max-width: var(--chat-w); width: 100%; margin-left: auto; margin-right: auto }
+#chat > .thread { max-width: var(--chat-w); width: 100%; margin-left: auto; margin-right: auto; display: flex; flex-direction: column; gap: 14px }
+:root[data-density=compact] #chat > .thread { gap: 8px }
 .msg.user { background: var(--p3); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; white-space: pre-wrap; word-break: break-word }
 .msg.user img { max-height: 120px; border-radius: 8px; margin: 6px 6px 0 0 }
 .who { font-size: 0.821rem; color: var(--ac); text-transform: uppercase; letter-spacing: .8px; font-weight: 700; display: flex; gap: 8px; align-items: center }
@@ -276,6 +277,39 @@ main { display: flex; flex-direction: column; min-width: 0; min-height: 0 }
 #ved { flex: 1; border: 0; border-radius: 0; font-family: var(--mono); font-size: var(--code-fs); resize: none; white-space: pre; tab-size: 2 }
 #vpv { flex: 1; border: 0; background: #fff; width: 100% }
 
+
+/* live run status */
+.runbar { border-top: 1px solid var(--line); background: var(--p1); padding: 6px 14px; display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; font-size: 0.857rem }
+.runbar .rb-main { flex: 1; min-width: 0; display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap }
+.runbar .rb-main b { font-weight: 600 }
+.runbar .rb-hint { flex-basis: 100%; order: 3; color: var(--dim); font-size: 0.821rem }
+.runbar .rb-act { display: flex; gap: 6px }
+.runbar.slow { background: color-mix(in srgb, var(--warn) 10%, var(--p1)) }
+.runbar.stalled { background: color-mix(in srgb, var(--err) 14%, var(--p1)) }
+.runbar.stalled .rb-hint { color: var(--err) }
+.runbar.you { background: color-mix(in srgb, var(--ac) 16%, var(--p1)) }
+.rb-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); flex: none; display: inline-block; animation: pulse 1.2s infinite; align-self: center }
+.runbar.slow .rb-dot { background: var(--warn) } .runbar.stalled .rb-dot { background: var(--err); animation: none } .runbar.you .rb-dot { background: var(--ac) }
+.running-btn { display: inline-flex; gap: 6px; align-items: center; border: 1px solid #1f5a35; background: color-mix(in srgb, var(--ok) 12%, var(--p2)); color: var(--ok); border-radius: 999px; padding: 3px 10px; cursor: pointer; font-size: 0.857rem; font-weight: 600; white-space: nowrap }
+.running-btn.attention { border-color: var(--ac); color: var(--ac); background: var(--ac-bg) }
+.running-btn.attention .rb-dot { background: var(--ac) }
+.si.running .si-t > div:first-child { color: var(--tx) }
+.si.attention .rb-dot { background: var(--ac) }
+.run-row.slow .small { color: var(--warn) } .run-row.stalled .small { color: var(--err) } .run-row.you .small { color: var(--ac) }
+
+/* files panel actions */
+.fi { display: flex; align-items: center; gap: 6px }
+.fi .fn { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.fi .fsz { color: var(--dim); font-size: 0.75rem; flex: none }
+.fa { display: none; gap: 2px; flex: none }
+.fi:hover .fa, .fi.sel .fa, .tree summary:hover .fa { display: inline-flex }
+.fa button { background: none; border: 0; color: var(--dim); cursor: pointer; padding: 0 4px; font-size: 0.857rem; border-radius: 4px }
+.fa button:hover { color: var(--tx); background: var(--p3) }
+.tree summary { display: flex; align-items: center; gap: 6px }
+.tree summary .fn { flex: 1 }
+.fsum { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 10px; font-size: 0.821rem; color: var(--dim) }
+@media (hover: none) { .fa { display: inline-flex } }
+
 /* segmented controls (settings) */
 .seg { display: flex; flex-wrap: wrap; gap: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; width: fit-content; max-width: 100% }
 .seg button { background: var(--p2); border: 0; border-right: 1px solid var(--line); padding: 6px 12px; cursor: pointer; color: var(--dim); font-size: 0.893rem }
@@ -327,6 +361,8 @@ main { display: flex; flex-direction: column; min-width: 0; min-height: 0 }
   #top .grow { display: none }
   .mchip { flex: 1; max-width: none }
   .mchip .tag, .mchip .strength { display: none }
+  .runbar { padding: 6px 10px }
+  .running-btn { padding: 3px 8px }
   #perm { max-width: 112px; font-size: 16px; padding: 4px 6px }
   #chat { padding: 10px 10px 16px; gap: 10px }
   #composer { padding: 6px 8px calc(6px + env(safe-area-inset-bottom)) }

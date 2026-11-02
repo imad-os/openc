@@ -24,9 +24,13 @@ An opencode-style coding agent in the browser for any [Ollama](https://ollama.co
   - Old tool output is pruned and the conversation is auto-compacted when the context window fills up.
   - Retries with backoff, and a fallback to chat-only mode when a model rejects tools.
   - Read-before-edit and whitespace-tolerant edits.
-- **Tools:** `list_files`, `find_files`, `read_file`, `grep`, `write_file`, `edit_file`, `move_file`, `delete_file`, `run_js` (sandboxed worker with access to workspace files), `todo_write`, `ask_user` and `task`.
+- **Internet:** `web_search` and `web_fetch` let agents look up SDK docs, READMEs and API references. See [Internet access](#internet-access).
+- **Live status:** a bar above the composer shows what the agent is doing right now (waiting for the model, thinking, writing, running a tool, waiting for your approval…), with timers, token speed and the time since the last token. While waiting it reports whether the model is loaded in memory. A watchdog retries a step automatically when the model stops sending tokens, and you can **Retry step** or **Stop** by hand.
+- **Parallel conversations:** agents keep running when you switch conversations, models or servers. A "N running" button lists them with their live status, and you can switch between them or stop them.
+- **Tools:** `list_files`, `find_files`, `read_file`, `grep`, `write_file`, `edit_file`, `move_file`, `delete_file`, `run_js` (sandboxed worker with access to workspace files), `todo_write`, `ask_user`, `task`, `web_search` and `web_fetch`.
 - **Answers:** Markdown with tables and highlighted code, and a run summary (time, steps, tool calls, tokens, tok/s, changed files).
 - **Notifications:** a chime when the agent finishes, fails, or needs approval or an answer, plus optional desktop notifications.
+- **Files:** per-file download, rename and delete, a .zip of a folder or of everything, and "Save code to files" on any answer that contains code blocks.
 - **Workspace:** a browser-stored workspace or a real local folder (Chrome/Edge). It has an editor and a live HTML preview.
 - **Sync (optional):** Google or email/password sign-in. Servers, API keys, ratings, stats, agents and conversations are stored in Firestore under your account only.
 
@@ -47,6 +51,17 @@ OLLAMA_ORIGINS="*" ollama serve
 ```
 
 If the page is served over **https**, the Ollama URL must also be https, because browsers block mixed content. A reverse proxy or tunnel works.
+
+## Internet access
+
+Browsers block most cross-site requests (CORS), so `web_fetch` tries several routes in order:
+
+1. The page directly, which works for CORS-enabled hosts such as GitHub raw, jsDelivr, unpkg and many APIs.
+2. Ollama's web fetch, if you add an **ollama.com API key** (free account → ollama.com/settings/keys).
+3. **Jina Reader** (`r.jina.ai`), which is free and needs no key. A Jina key raises its rate limits.
+4. Your own CORS proxy. `proxy/cloudflare-worker.js` is a ready-to-deploy free Cloudflare Worker.
+
+`web_search` uses Ollama web search when a key is set, then Jina search (key), your SearXNG instance, and finally free fallbacks: DuckDuckGo through Jina Reader, then Wikipedia. Configure these in **Settings → Internet** and press **Test internet access**.
 
 ## Firebase setup (sign-in and sync)
 

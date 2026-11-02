@@ -1,6 +1,6 @@
 // Chat rendering: message blocks (streaming text + thinking), tool cards (approve / ask),
 // notes, run summary footer, and re-rendering a stored conversation.
-import { $, h, esc, toast, promptDialog, confirmDialog } from '../util/dom.js';
+import { $, h, esc, toast, promptDialog, confirmDialog, modal } from '../util/dom.js';
 import { renderMarkdown, highlightCode, lineNumbers } from '../util/markdown.js';
 import { parseArgs, fmt, firstLine } from '../util/misc.js';
 import { state, emit } from '../core/state.js';
@@ -56,7 +56,9 @@ function scroller(el) {
 }
 
 export function createView(root, scrollEl = root) {
-  const down = scroller(scrollEl);
+  const scroll = scroller(scrollEl);
+  // A conversation running in the background keeps rendering into a detached element: don't scroll then.
+  const down = force => { if (scrollEl.contains(root)) scroll(force); };
   const view = {
     root,
     scroll: down,
@@ -73,6 +75,9 @@ export function createView(root, scrollEl = root) {
     block(label) { return makeBlock(root, label, down, scrollEl); },
     footer(run, answer) {
       const files = run.files || [];
+      const answers = root.querySelectorAll(':scope > .msg.asst');
+      const lastMsg = answers[answers.length - 1];
+      const codeCount = lastMsg ? lastMsg.querySelectorAll(':scope > .md .codeblock').length : 0;
       const parts = [`in ${fmt.dur(run.duration)}`, `${run.steps} step${run.steps === 1 ? '' : 's'}`, `${run.toolCalls} tool call${run.toolCalls === 1 ? '' : 's'}`];
       if (run.toolErrors) parts.push(`${run.toolErrors} failed`);
       if (run.tokens) parts.push(`${fmt.num(run.tokens)} tokens`);
@@ -81,7 +86,8 @@ export function createView(root, scrollEl = root) {
         h('div', { class: 'rf-line' },
           run.stopped ? h('span', { class: 'rf-stop' }, '■ Stopped') : run.finished === false ? h('span', { class: 'rf-stop' }, '◐ Incomplete') : h('span', { class: 'rf-ok' }, '✓ Done'),
           h('span', {}, parts.join(' · ')),
-          answer ? h('button', { class: 'btn sm ghost', type: 'button', onclick: e => { navigator.clipboard?.writeText(answer); e.target.textContent = 'Copied'; } }, 'Copy answer') : null),
+          answer ? h('button', { class: 'btn sm ghost', type: 'button', onclick: e => { navigator.clipboard?.writeText(answer); e.target.textContent = 'Copied'; } }, 'Copy answer') : null,
+          codeCount ? h('button', { class: 'btn sm ghost', type: 'button', title: 'Save the code blocks of this answer as files in the workspace', onclick: () => saveAllCode(lastMsg) }, `💾 Save code to files (${codeCount})`) : null),
         files.length ? h('div', { class: 'rf-files' }, files.map(([p, kind]) =>
           h('button', { class: 'fchip ' + kind, type: 'button', title: kind, disabled: kind === 'deleted', onclick: () => emit('open-file', p) },
             (kind === 'created' ? '+ ' : kind === 'deleted' ? '− ' : '~ ') + p))) : null);
@@ -164,6 +170,13 @@ function makeBlock(parent, label, down, scrollEl) {
       else if (!raf) raf = requestAnimationFrame(() => paint(false));
     },
     badge(t) { head.append(h('span', { class: 'badge' }, t)); },
+    /** Clear partial output before a retried request. */
+    reset() {
+      cancelAnimationFrame(raf); raf = 0; value = '';
+      text.innerHTML = '';
+      think.el.hidden = true;
+      head.append(h('span', { class: 'badge' }, 'retried'));
+    },
     tool(call) { think.end(); const c = makeToolCard(call, down, scrollEl); tools.append(c.el); down(); return c; },
     finish() {
       if (raf) { cancelAnimationFrame(raf); paint(true); }
@@ -256,8 +269,26 @@ export function renderThread(view, messages) {
   }
 }
 
-let mainView = null;
-export const getMainView = () => (mainView ||= createView($('#chat')));
+/* ---------- one view per conversation (running ones keep rendering while hidden) ---------- */
+const threads = new Map(); // session id -> view
+
+export function threadView(session) {
+  let v = threads.get(session.id);
+  if (!v) {
+    v = createView(h('div', { class: 'thread' }), $('#chat'));
+    v.rendered = false;
+    threads.set(session.id, v);
+  }
+  return v;
+}
+
+/** Put a conversation's view on screen. */
+export function showThread(view) {
+  const chat = $('#chat');
+  if (chat.firstElementChild !== view.root) chat.replaceChildren(view.root);
+}
+
+export const dropThread = id => threads.delete(id);
 
 /* ---------- code block actions: Run (sandboxed), Edit, Save, Copy ---------- */
 
@@ -335,6 +366,58 @@ async function saveBlock(block, btn) {
     flash(btn, 'Saved ✓');
     toast(`Saved ${p}`);
   } catch (e) { toast(e.message); }
+}
+
+const FILE_RE = /([\w.\-/]+\.(?:html?|css|m?js|jsx|tsx?|json|py|md|txt|sh|sql|svg|xml|ya?ml|toml|go|rs|java|kt|c|cpp|h|cs|php|rb|vue|svelte|env|ini))\b/gi;
+
+/** Best guess at a file name: a "// file: x" first line, a name mentioned just above, or a default per language. */
+function guessName(block, used) {
+  const code = codeOf(block);
+  const first = code.split('\n')[0];
+  let name = first.match(/^\s*(?:\/\/|#|<!--|\/\*|--)\s*(?:file(?:name)?\s*[:=]\s*)?([\w.\-/]+\.[a-z]{1,6})\b/i)?.[1];
+  if (!name) {
+    const prev = block.previousElementSibling;
+    const text = prev && !prev.classList.contains('codeblock') ? prev.textContent : '';
+    const all = [...text.matchAll(FILE_RE)];
+    if (all.length) name = all[all.length - 1][1];
+  }
+  name = name || DEFAULT_NAMES[langOf(block)] || `snippet.${langOf(block) || 'txt'}`;
+  let candidate = name, i = 2;
+  while (used.has(candidate)) candidate = name.replace(/(\.[^.]+)?$/, m => `-${i++}${m}`);
+  used.add(candidate);
+  return candidate;
+}
+
+/** Dialog listing every code block of an answer with an editable file name. */
+function saveAllCode(msgEl) {
+  const blocks = [...msgEl.querySelectorAll(':scope > .md .codeblock')];
+  const used = new Set();
+  const rows = blocks.map(b => ({ block: b, name: h('input', { value: guessName(b, used) }), on: h('input', { type: 'checkbox', checked: true }) }));
+  modal((box, close) => {
+    box.append(
+      h('h3', {}, 'Save code to files'),
+      h('div', { class: 'dim small' }, `Into ${state.fs.label}. Existing files with the same name are overwritten.`),
+      ...rows.map(r => h('div', { class: 'row' }, r.on, h('span', { class: 'tag unk' }, langOf(r.block) || 'text'), r.name)),
+      h('div', { class: 'row end' },
+        h('button', { class: 'btn', type: 'button', onclick: close }, 'Cancel'),
+        h('button', {
+          class: 'btn primary', type: 'button', onclick: async () => {
+            const saved = [];
+            try {
+              for (const r of rows) {
+                if (!r.on.checked) continue;
+                const p = normPath(r.name.value);
+                if (!p) continue;
+                await state.fs.write(p, codeOf(r.block));
+                saved.push(p);
+              }
+            } catch (e) { return toast(e.message); }
+            close();
+            emit('fs-changed', saved[0]);
+            if (saved.length) { toast(`Saved ${saved.join(', ')}`, 4000); emit('open-file', saved[0]); }
+          },
+        }, 'Save')));
+  });
 }
 
 export function initChat() {

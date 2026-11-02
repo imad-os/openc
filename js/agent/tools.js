@@ -2,6 +2,7 @@
 // ctx passed to run(): { fs, signal, tracker:{read:Set, changes:Map}, changed(path), setTodos, askUser, spawn }
 import { normPath, globToRegex } from '../core/fs.js';
 import { clip } from '../util/misc.js';
+import { webFetch, webSearch } from './web.js';
 
 const S = description => ({ type: 'string', description });
 const B = description => ({ type: 'boolean', description });
@@ -274,6 +275,35 @@ export const TOOLS = {
     required: ['code'],
     async run({ code }, ctx) {
       return runInWorker(code, await snapshotFiles(ctx.fs), ctx.signal);
+    },
+  },
+
+  web_search: {
+    readOnly: true,
+    web: true,
+    description: 'Search the internet. Returns titles, URLs and snippets. Use it to find official documentation, SDK references, API changes and examples; then read pages with web_fetch.',
+    parameters: { query: S('Search query, e.g. "stripe node sdk create payment intent docs"'), max_results: I('Number of results, 1-10 (default 8)') },
+    required: ['query'],
+    async run({ query, max_results = 8 }, ctx) {
+      const { provider, results } = await webSearch(String(query || ''), Math.min(10, Math.max(1, parseInt(max_results, 10) || 8)), ctx.signal);
+      return `Results from ${provider} for "${query}":\n\n` + results.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}${r.snippet ? '\n   ' + clip(r.snippet.replace(/\s+/g, ' '), 300) : ''}`).join('\n');
+    },
+  },
+
+  web_fetch: {
+    readOnly: true,
+    web: true,
+    description: 'Read a web page (documentation, README, API reference, raw file) as text/Markdown. Long pages are returned in chunks: call again with the given offset to continue.',
+    parameters: { url: S('Full URL (https://...)'), offset: I('Character offset to continue reading a long page (default 0)'), max_chars: I('Maximum characters to return (default 20000)') },
+    required: ['url'],
+    async run({ url, offset = 0, max_chars = 20000 }, ctx) {
+      const page = await webFetch(String(url || '').trim(), ctx.signal);
+      const start = Math.max(0, parseInt(offset, 10) || 0);
+      const n = Math.min(40000, Math.max(1000, parseInt(max_chars, 10) || 20000));
+      const chunk = page.content.slice(start, start + n);
+      const rest = page.content.length - start - chunk.length;
+      return `# ${page.title}\nURL: ${url} (via ${page.via}, ${page.content.length} chars)\n\n${chunk}` +
+        (rest > 0 ? `\n\n…[${rest} more chars: call web_fetch again with offset=${start + chunk.length}]` : '');
     },
   },
 

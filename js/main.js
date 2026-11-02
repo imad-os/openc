@@ -15,6 +15,7 @@ import { initFiles } from './ui/files.js';
 import { initSessions, loadSessions } from './ui/sessions.js';
 import { initChat } from './ui/chat.js';
 import { applyDisplay } from './ui/display.js';
+import { initRuns, abortAll } from './ui/runs.js';
 
 async function loadUserData() {
   let settings = {};
@@ -48,7 +49,7 @@ export const startLocal = () => { state.user = null; return useStore(new LocalSt
 async function onAuthChange(user) {
   if (user) {
     if (state.user?.uid === user.uid) return;
-    state.abort?.abort();
+    abortAll();
     state.user = user;
     await useStore(new CloudStore(firebase(), user));
     return;
@@ -56,7 +57,7 @@ async function onAuthChange(user) {
   const wasSignedIn = !!state.user;
   state.user = null;
   if (wasSignedIn) {
-    state.abort?.abort();
+    abortAll();
     state.store = null;
     state.session = null;
     state.conn = null;
@@ -70,6 +71,7 @@ async function boot() {
   state.fs = new VirtualFS();
   try { state.agentId = localStorage.getItem('oc2.agent') || 'build'; } catch { /* ignore */ }
   initChat();
+  initRuns();
   initAuthUI({ onLocal: startLocal });
   initConnect();
   initModels();

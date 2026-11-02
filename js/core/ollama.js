@@ -72,21 +72,38 @@ export async function listModels(conn = state.conn) {
 export const showModel = (name, conn = state.conn) =>
   request('/api/show', { model: name }, { conn }).then(r => r.json());
 
-const transient = e => !(e instanceof HttpError) || [408, 425, 429, 500, 502, 503, 504].includes(e.status);
+export class StallError extends Error {
+  constructor(message) { super(message); this.name = 'StallError'; }
+}
+
+const transient = e => !(e instanceof StallError) && (!(e instanceof HttpError) || [408, 425, 429, 500, 502, 503, 504].includes(e.status));
+const secs = ms => Math.round(ms / 1000) + 's';
 
 /**
- * Streaming /api/chat. Retries transient failures (network, 5xx, 429) with backoff,
- * but only if nothing was streamed yet. Returns { content, thinking, tool_calls, stats }.
+ * Streaming /api/chat. Returns { content, thinking, tool_calls, stats }.
+ * - Retries transient failures (network, 5xx, 429) with backoff, only if nothing was streamed yet.
+ * - Watchdog: throws StallError when the first chunk takes longer than firstTokenTimeout,
+ *   or when no chunk arrives for idleTimeout (ms; 0 disables).
  */
-export async function chatStream(body, { signal, onChunk, retries = 2 } = {}) {
+export async function chatStream(body, { signal, onChunk, onRetry, conn = state.conn, retries = 2, firstTokenTimeout = 0, idleTimeout = 0 } = {}) {
   for (let attempt = 0; ; attempt++) {
     let received = false;
+    const ctrl = new AbortController();
+    const onAbort = () => ctrl.abort();
+    signal?.addEventListener('abort', onAbort, { once: true });
+    let stall = null, timer = 0;
+    const arm = (ms, why) => {
+      clearTimeout(timer);
+      if (ms > 0) timer = setTimeout(() => { stall = why; ctrl.abort(); }, ms);
+    };
     try {
-      const res = await request('/api/chat', { ...body, stream: true }, { signal });
+      arm(firstTokenTimeout, `no response from the model for ${secs(firstTokenTimeout)}`);
+      const res = await request('/api/chat', { ...body, stream: true }, { signal: ctrl.signal, conn });
       const out = { content: '', thinking: '', tool_calls: [], stats: null };
       for await (const ch of ndjson(res)) {
         if (ch.error) throw new Error(ch.error);
         received = true;
+        arm(idleTimeout, `no new tokens for ${secs(idleTimeout)}`);
         const m = ch.message || {};
         if (m.thinking) out.thinking += m.thinking;
         if (m.content) out.content += m.content;
@@ -96,15 +113,26 @@ export async function chatStream(body, { signal, onChunk, retries = 2 } = {}) {
       }
       return out;
     } catch (e) {
+      if (stall && !signal?.aborted) e = new StallError(stall);
       if (e.name === 'AbortError' || received || attempt >= retries || !transient(e)) throw e;
+      onRetry?.(attempt + 1, e);
       await sleep(800 * 2 ** attempt, signal);
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
     }
   }
 }
 
-export async function chatOnce(body, { signal } = {}) {
-  const res = await request('/api/chat', { ...body, stream: false }, { signal });
+export async function chatOnce(body, { signal, conn = state.conn } = {}) {
+  const res = await request('/api/chat', { ...body, stream: false }, { signal, conn });
   const j = await res.json();
   if (j.error) throw new Error(j.error);
   return j.message || {};
+}
+
+/** Models currently loaded in memory on a server: name -> { size, size_vram, expires_at } */
+export async function loadedModels(conn = state.conn) {
+  const ps = await (await request('/api/ps', null, { conn })).json();
+  return Object.fromEntries((ps.models || []).map(m => [m.name, m]));
 }

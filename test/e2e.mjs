@@ -10,7 +10,7 @@ const ok = (cond, msg) => { if (!cond) throw new Error('FAIL: ' + msg); console.
 const browser = await chromium.launch();
 const ctx = await browser.newContext();
 // Force local mode (no Firebase network in tests) via an invalid-but-empty override path.
-await ctx.addInitScript(() => { window.__TEST__ = true; });
+await ctx.addInitScript(() => { window.__TEST__ = true; try { if (!localStorage.getItem('oc2.settings')) localStorage.setItem('oc2.settings', JSON.stringify({ idleTimeout: 3 })); } catch { /* sandboxed frames */ } });
 const page = await ctx.newPage();
 page.on('pageerror', e => errors.push('pageerror: ' + e.message));
 page.on('console', m => { if (m.type() === 'error' && !/firebase|gstatic|Failed to load resource/i.test(m.text())) errors.push('console: ' + m.text()); });
@@ -136,6 +136,61 @@ await page.waitForFunction(() => [...document.querySelectorAll('.cbo-console')].
 ok(true, 'edited JS runs');
 await js.locator('.cb-edit').click();
 ok((await js.locator('.cb-info').textContent()).includes('edited'), 'edit applied back to the highlighted view');
+
+// save all code blocks of an answer to files
+await page.click('.runfoot button:has-text("Save code to files")');
+await page.click('.modal button.primary:has-text("Save")');
+await page.waitForFunction(() => { const f = JSON.parse(localStorage.getItem('oc2.vfs')); return f['style.css'] && f['script.js']; });
+ok(true, 'answer code blocks saved as index.html / style.css / script.js');
+
+// files panel: download one file, zip all
+if (await page.isVisible('#v-close')) await page.click('#v-close');
+const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#f-zip')]);
+await dl.saveAs(process.env.ZIP || '/tmp/ws.zip');
+ok(dl.suggestedFilename().endsWith('.zip'), 'zip all downloads ' + dl.suggestedFilename());
+await page.hover('.fi:has-text("style.css")');
+const [dl2] = await Promise.all([page.waitForEvent('download'), page.locator('.fi:has-text("style.css") .fa button[title^="Download"]').click()]);
+ok(dl2.suggestedFilename() === 'style.css', 'single file download');
+
+// internet: web_fetch reads a page
+await page.click('#b-new');
+await page.fill('#inp', 'read the docs for the mock sdk');
+await page.press('#inp', 'Enter');
+await page.waitForSelector('#chat .runfoot', { timeout: 20000 });
+ok((await page.textContent('#chat')).includes('SDK_MAGIC_42 found'), 'web_fetch tool read the page');
+ok((await page.locator('.tool:has-text("web_fetch") .tres').textContent()).includes('Mock SDK docs'), 'page converted to text with its title');
+
+// stall detection: no tokens for 3 s → automatic retry of the step
+await page.click('#b-new');
+await page.fill('#inp', 'stall test');
+await page.press('#inp', 'Enter');
+await page.waitForSelector('#runbar:not([hidden])');
+await page.waitForFunction(() => document.querySelector('#runbar')?.textContent.includes('Thinking'));
+ok(true, 'status bar shows the live phase (Thinking)');
+await page.waitForFunction(() => /Retrying|retry/i.test(document.querySelector('#runbar')?.textContent || '') || document.body.textContent.includes('Recovered'), null, { timeout: 15000 });
+await page.waitForSelector('#chat .runfoot', { timeout: 20000 });
+ok((await page.textContent('#chat')).includes('Recovered after the stall.'), 'stalled step retried automatically and recovered');
+ok(await page.isVisible('#chat .badge:has-text("retried")'), 'retried step is labelled');
+ok(await page.isHidden('#runbar'), 'status bar hides when done');
+
+// background runs: switch conversations while one is running
+await page.click('#b-new');
+await page.fill('#inp', 'slow job please');
+await page.press('#inp', 'Enter');
+await page.waitForFunction(() => document.querySelector('#running')?.textContent.includes('1 running'));
+ok(true, 'running indicator shows 1 running');
+await page.click('#b-new');
+ok(await page.isVisible('#b-send'), 'new conversation is free while the other runs');
+await page.fill('#inp', 'hi there');
+await page.press('#inp', 'Enter');
+await page.waitForSelector('#chat .runfoot');
+ok(await page.isVisible('.si.running'), 'running conversation marked in the sidebar');
+await page.click('#running');
+await page.click('.run-row');
+await page.waitForFunction(() => document.querySelector('#chat').textContent.includes('slow job please'));
+ok(true, 'switched back to the running conversation from the list');
+await page.waitForFunction(() => document.querySelector('#chat').textContent.includes('Slow job finished.'), null, { timeout: 20000 });
+ok(await page.isHidden('#running'), 'background run finished; indicator gone');
 
 // display settings
 await page.click('#b-display');

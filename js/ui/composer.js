@@ -1,11 +1,12 @@
 // Composer: input, image attachments, slash commands, and orchestrating an agent run.
-import { state, emit, currentAgent, primaryAgents, modelCaps, saveSettings } from '../core/state.js';
+import { state, emit, on, currentAgent, primaryAgents, modelCaps, saveSettings } from '../core/state.js';
 import { $, h, toast } from '../util/dom.js';
 import { firstLine } from '../util/misc.js';
 import { notify, unlockAudio } from '../util/sound.js';
 import { runAgent, createRun } from '../agent/runner.js';
-import { getMainView } from './chat.js';
-import { persistSession, draftSession, renderTodos, newSession, markDirty } from './sessions.js';
+import { threadView, dropThread } from './chat.js';
+import { persistSession, draftSession, renderTodos, newSession, markDirty, openSession } from './sessions.js';
+import { currentRun, registerRun, unregisterRun, isRunning } from './runs.js';
 import { recordModelStats, showModels } from './models.js';
 import { cycleAgent, setAgent } from './workspace.js';
 import { openAgents, openSettings } from './modals.js';
@@ -28,10 +29,21 @@ export function initComposer() {
     if (files.length) { e.preventDefault(); addImages(files); }
   });
   $('#b-send').addEventListener('click', send);
-  $('#b-stop').addEventListener('click', () => state.abort?.abort());
+  $('#b-stop').addEventListener('click', () => currentRun()?.controller.abort());
   $('#b-att').addEventListener('click', () => $('#f-img').click());
   $('#f-img').addEventListener('change', e => { addImages([...e.target.files]); e.target.value = ''; });
-  document.addEventListener('keydown', e => { if (e.key === 'Escape' && state.busy && !document.querySelector('.modal,.popover')) state.abort?.abort(); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && currentRun() && !document.querySelector('.modal,.popover,.cb-out.full')) currentRun().controller.abort(); });
+  on('session', updateComposer);
+  on('runs', updateComposer);
+}
+
+/** Send/Stop reflect the conversation on screen; other conversations may be running too. */
+export function updateComposer() {
+  const running = !!currentRun();
+  state.busy = running;
+  $('#b-send').hidden = running;
+  $('#b-stop').hidden = !running;
+  emit('busy', running);
 }
 
 function autosize() {
@@ -57,13 +69,6 @@ function paintAttachments() {
   $('#atts').replaceChildren(...pending.map((b64, i) => h('div', {},
     h('img', { src: 'data:image/png;base64,' + b64, alt: '' }),
     h('button', { type: 'button', onclick: () => { pending.splice(i, 1); paintAttachments(); } }, '×'))));
-}
-
-function setBusy(on) {
-  state.busy = on;
-  $('#b-send').hidden = on;
-  $('#b-stop').hidden = !on;
-  emit('busy', on);
 }
 
 function command(text) {
@@ -95,20 +100,25 @@ function summarize(run, stopped, finished) {
 export async function send() {
   const inp = $('#inp');
   const text = inp.value.trim();
-  if (state.busy || (!text && !pending.length)) return;
+  if (!text && !pending.length) return;
   if (text.startsWith('/')) { inp.value = ''; autosize(); return command(text); }
+  if (isRunning(state.session?.id)) return toast('This conversation is still running. Stop it, or start a new session (they can run in parallel).');
   if (!state.model) return showModels();
   unlockAudio();
 
   const s = state.session || (state.session = draftSession());
-  const view = getMainView();
+  const view = threadView(s);
+  view.rendered = true;
   if (!s.messages.length) view.clear();
   const um = { role: 'user', content: text };
   if (pending.length) { um.images = pending.splice(0); paintAttachments(); }
   s.messages.push(um);
   view.user(um);
   if (s.title === 'New session') s.title = (text || 'Image').replace(/\s+/g, ' ').slice(0, 60);
-  s.agent = state.agentId;
+  const agent = currentAgent();
+  s.agent = agent.id;
+  s.model = state.model;
+  s.url = state.conn.url;
   $('#title').textContent = s.title;
   inp.value = '';
   autosize();
@@ -116,29 +126,34 @@ export async function send() {
   const run = createRun();
   const controller = new AbortController();
   const signal = controller.signal;
-  state.abort = controller;
-  setBusy(true);
+  const rec = { session: s, run, controller, agentName: agent.name, model: state.model, conn: state.conn };
+  registerRun(s.id, rec);
   persistSession(s);
+  const visible = () => state.session === s;
+  const where = () => (visible() ? '' : ` in "${s.title}"`);
 
   const hooks = {
     persist: () => persistSession(s),
     getTodos: () => s.todos || [],
-    setTodos: list => { s.todos = list; renderTodos(); },
+    setTodos: list => { s.todos = list; if (visible()) renderTodos(); },
+    stats: st => { s._lastStats = st; if (visible()) emit('llm-stats', st); },
     confirm: async (card, def) => {
-      notify('attention', 'Approval needed', `${card.name} is waiting for you`, state.settings);
+      notify('attention', 'Approval needed' + where(), `${card.name} is waiting for you`, state.settings);
+      if (!visible()) toast(`"${s.title}" needs your approval — open it from the running list`, 5000);
       const answer = await card.confirm(def.perm, signal);
       if (answer === 'always') { state.settings.perm = def.perm === 'edit' ? 'edits' : 'auto'; saveSettings(); }
       return answer === 'allow' || answer === 'always';
     },
     askUser: (question, options, card) => {
-      notify('attention', 'The agent has a question', question, state.settings);
+      notify('attention', 'The agent has a question' + where(), question, state.settings);
+      if (!visible()) toast(`"${s.title}" has a question for you`, 5000);
       return card.ask(question, options, signal);
     },
   };
 
   let result = null, error = null, stopped = false;
   try {
-    result = await runAgent({ agent: currentAgent(), thread: s, view, signal, run, hooks });
+    result = await runAgent({ agent, thread: s, view, signal, run, hooks });
   } catch (e) {
     if (e.name === 'AbortError') stopped = true; else error = e;
   }
@@ -151,14 +166,15 @@ export async function send() {
     if (last >= 0) { s.messages[last]._run = summary; markDirty(s, last); }
     view.footer(summary, stopped ? '' : result?.text);
   }
-  for (const [model, st] of Object.entries(run.byModel)) recordModelStats(model, { runs: 1, ...st });
+  for (const [model, st] of Object.entries(run.byModel)) recordModelStats(model, { runs: 1, ...st }, rec.conn);
   await persistSession(s);
-  setBusy(false);
-  state.abort = null;
+  unregisterRun(s.id);
+  if (!visible()) dropThread(s.id); // re-rendered from storage when opened
   emit('fs-changed');
   if (!stopped) {
     notify(error ? 'error' : 'done',
-      error ? 'Agent failed' : 'Agent finished',
+      (error ? 'Agent failed' : 'Agent finished') + where(),
       error ? error.message : firstLine(result?.text) || s.title, state.settings);
+    if (!visible()) toast(`${error ? '⚠' : '✓'} "${s.title}" ${error ? 'failed' : 'finished'}`, 5000);
   }
 }

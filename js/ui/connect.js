@@ -21,7 +21,6 @@ function paintAccountButton() {
 }
 
 export async function showConnect() {
-  if (state.busy) state.abort?.abort();
   show('connect');
   paintAccountButton();
   $('#c-err').hidden = true;

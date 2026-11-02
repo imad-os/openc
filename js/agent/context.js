@@ -93,7 +93,7 @@ Write a concise but complete summary in Markdown with these sections:
 Keep exact file paths, names and important values. No preamble.`;
 
 /** Summarize older messages into thread.summary. Returns the number of messages compacted (0 = nothing done). */
-export async function compactThread(thread, { model, budget, signal, num_ctx, think }) {
+export async function compactThread(thread, { model, conn, budget, signal, num_ctx, think }) {
   const cut = pickCut(thread, budget);
   if (cut < 0) return 0;
   let text = transcript(thread, cut);
@@ -105,7 +105,7 @@ export async function compactThread(thread, { model, budget, signal, num_ctx, th
     options: { temperature: 0.1, num_ctx },
   };
   if (think !== undefined) body.think = think;
-  const msg = await chatOnce(body, { signal });
+  const msg = await chatOnce(body, { signal, conn });
   const summary = String(msg.content || '').trim();
   if (!summary) return 0;
   const n = cut - (thread.summaryUpto || 0);

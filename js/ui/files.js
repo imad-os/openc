@@ -1,6 +1,7 @@
 // Files panel: tree, editor, HTML preview, upload, open a real folder, todos tab.
 import { state, on } from '../core/state.js';
-import { $, h, toast, promptDialog } from '../util/dom.js';
+import { $, h, toast, promptDialog, confirmDialog } from '../util/dom.js';
+import { makeZip, downloadBlob } from '../util/zip.js';
 import { normPath, VirtualFS, DirFS } from '../core/fs.js';
 import { invalidateFileCache } from '../agent/runner.js';
 import { openInNewTab, SANDBOX } from './sandbox.js';
@@ -9,6 +10,7 @@ let dirty = false, previewing = false, refreshTimer = 0;
 
 export function initFiles() {
   $('#f-ref').addEventListener('click', refreshFiles);
+  $('#f-zip').addEventListener('click', () => zipFiles(''));
   $('#f-new').addEventListener('click', newFile);
   $('#f-up').addEventListener('click', () => $('#f-in').click());
   $('#f-in').addEventListener('change', upload);
@@ -23,10 +25,7 @@ export function initFiles() {
   });
   $('#v-save').addEventListener('click', save);
   $('#v-close').addEventListener('click', closeViewer);
-  $('#v-dl').addEventListener('click', () => {
-    const a = h('a', { href: URL.createObjectURL(new Blob([$('#ved').value])), download: state.openFile.split('/').pop() });
-    a.click();
-  });
+  $('#v-dl').addEventListener('click', () => downloadBlob(new Blob([$('#ved').value]), state.openFile.split('/').pop()));
   $('#v-prev').addEventListener('click', togglePreview);
   $('#v-tab').addEventListener('click', async () => {
     if (dirty) await save();
@@ -64,6 +63,8 @@ export async function refreshFiles() {
   try { files = await state.fs.list(); } catch (e) { toast(e.message); }
   const tree = $('#tree');
   tree.innerHTML = '';
+  $('#f-zip').disabled = !files.length;
+  $('#fs-count').textContent = files.length ? `${files.length} file${files.length === 1 ? '' : 's'}` : '';
   if (!files.length) {
     tree.append(h('div', { class: 'dim pad' }, 'No files yet. Ask the agent to create something, upload files, or open a folder.'));
     return;
@@ -78,24 +79,74 @@ export async function refreshFiles() {
     });
   }
   const el = h('div', { class: 'tree' });
-  const draw = (node, parent, depth) => {
+  const draw = (node, parent, depth, prefix = '') => {
     const keys = Object.keys(node).sort((a, b) => {
       const da = typeof node[a] === 'object', db = typeof node[b] === 'object';
       return da === db ? a.localeCompare(b) : da ? -1 : 1;
     });
     for (const k of keys) {
       const v = node[k];
+      const act = (icon, title, fn) => h('button', { type: 'button', title, onclick: e => { e.stopPropagation(); e.preventDefault(); fn(); } }, icon);
       if (typeof v === 'string') {
-        parent.append(h('div', { class: 'fi' + (state.openFile === v ? ' sel' : ''), style: { paddingLeft: 8 + depth * 14 + 'px' }, onclick: () => openFile(v) }, k));
+        parent.append(h('div', { class: 'fi' + (state.openFile === v ? ' sel' : ''), style: { paddingLeft: 8 + depth * 14 + 'px' }, title: v, onclick: () => openFile(v) },
+          h('span', { class: 'fn' }, k),
+          h('span', { class: 'fa' },
+            act('⬇', 'Download ' + k, () => downloadFile(v)),
+            act('✎', 'Rename / move', () => renameFile(v)),
+            act('🗑', 'Delete', () => deleteFile(v)))));
       } else {
-        const d = h('details', { open: depth < 2 }, h('summary', { style: { paddingLeft: 8 + depth * 14 + 'px' } }, k + '/'));
-        draw(v, d, depth + 1);
+        const dir = prefix + k;
+        const d = h('details', { open: depth < 2 }, h('summary', { style: { paddingLeft: 8 + depth * 14 + 'px' } },
+          h('span', { class: 'fn' }, k + '/'),
+          h('span', { class: 'fa' }, act('⬇', `Download ${k}/ as .zip`, () => zipFiles(dir)))));
+        draw(v, d, depth + 1, dir + '/');
         parent.append(d);
       }
     }
   };
   draw(root, el, 0);
   tree.append(el);
+}
+
+async function downloadFile(p) {
+  try { downloadBlob(new Blob([await state.fs.readBytes(p)]), p.split('/').pop()); } catch (e) { toast(e.message); }
+}
+
+/** Zip the whole workspace ('') or one folder. */
+async function zipFiles(dir) {
+  try {
+    const all = await state.fs.list();
+    const list = dir ? all.filter(f => f.startsWith(dir + '/')) : all;
+    if (!list.length) return toast('No files to download');
+    const entries = [];
+    for (const p of list) entries.push({ name: dir ? p.slice(dir.length + 1) : p, data: await state.fs.readBytes(p) });
+    const base = (dir ? dir.split('/').pop() : (state.fs.virtual ? 'workspace' : state.fs.label.replace(/^Folder:\s*/, ''))) || 'workspace';
+    downloadBlob(makeZip(entries), `${base}.zip`);
+    toast(`Zipped ${entries.length} file${entries.length === 1 ? '' : 's'}`);
+  } catch (e) { toast('Zip failed: ' + e.message); }
+}
+
+async function renameFile(p) {
+  const to = await promptDialog('Rename or move to', p);
+  if (!to || to === p) return;
+  try {
+    const target = normPath(to);
+    if (await state.fs.exists(target)) return toast(target + ' already exists');
+    await state.fs.move(p, target);
+    if (state.openFile === p) state.openFile = target;
+    invalidateFileCache();
+    refreshFiles();
+  } catch (e) { toast(e.message); }
+}
+
+async function deleteFile(p) {
+  if (!(await confirmDialog(`Delete ${p}?`, 'Delete'))) return;
+  try {
+    await state.fs.remove(p);
+    if (state.openFile === p) closeViewer();
+    invalidateFileCache();
+    refreshFiles();
+  } catch (e) { toast(e.message); }
 }
 
 export async function openFile(path, quiet = false) {

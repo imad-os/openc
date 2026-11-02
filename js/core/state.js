@@ -15,6 +15,15 @@ export const DEFAULT_SETTINGS = Object.freeze({
   sound: true,
   volume: 0.6,
   desktopNotify: false,
+  firstTokenTimeout: 600, // s: give up waiting for the first token (big models can take minutes to load)
+  idleTimeout: 120,       // s: no new tokens for this long = stalled
+  autoRetryStall: true,   // retry a stalled step once automatically
+  webEnabled: true,       // web_search / web_fetch tools
+  searchProvider: 'auto', // auto | ollama | jina | searxng | duckduckgo | wikipedia
+  ollamaKey: '',          // ollama.com API key (web search/fetch)
+  jinaKey: '',            // optional Jina key (higher limits, search)
+  proxyUrl: '',           // optional CORS proxy, e.g. https://proxy.example.workers.dev/?url={url}
+  searxngUrl: '',         // optional SearXNG instance with JSON output enabled
 });
 
 export const state = {

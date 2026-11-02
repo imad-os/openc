@@ -8,6 +8,8 @@ import { LocalStore } from '../core/storage/local.js';
 import { loadSessions } from './sessions.js';
 import { display, setDisplay, resetDisplay } from './display.js';
 import { showAuth } from './auth.js';
+import { abortAll } from './runs.js';
+import { webFetch, webSearch } from '../agent/web.js';
 
 const field = (label, el) => h('label', { class: 'fld' }, label, el);
 const check = (el, label) => h('label', { class: 'check' }, el, label);
@@ -74,6 +76,24 @@ export function openSettings(tab = 'general') {
     const perm = sel(s.perm, [['ask', 'Ask before changes'], ['edits', 'Auto-accept file edits'], ['auto', 'Auto-accept everything']]);
     const autoC = cb(s.autoContinue), autoK = cb(s.autoCompact), sound = cb(s.sound), desk = cb(s.desktopNotify);
     const vol = h('input', { type: 'range', min: '0', max: '1', step: '0.05', value: String(s.volume) });
+    const web = cb(s.webEnabled), retry = cb(s.autoRetryStall);
+    const provider = sel(s.searchProvider, [['auto', 'Automatic (best available)'], ['ollama', 'Ollama web search (key)'], ['jina', 'Jina search (key)'], ['searxng', 'SearXNG (your instance)'], ['duckduckgo', 'DuckDuckGo (free, via Jina Reader)'], ['wikipedia', 'Wikipedia only']]);
+    const secret = (v, ph) => h('input', { type: 'password', value: v || '', placeholder: ph, autocomplete: 'off' });
+    const okey = secret(s.ollamaKey, 'ollama.com → Settings → Keys'), jkey = secret(s.jinaKey, 'optional: jina.ai API key');
+    const proxy = h('input', { value: s.proxyUrl || '', placeholder: 'optional: https://your-proxy.workers.dev/?url={url}' });
+    const searx = h('input', { value: s.searxngUrl || '', placeholder: 'optional: https://searx.example.org' });
+    const first = num(s.firstTokenTimeout, { min: '10', max: '3600' }), idle = num(s.idleTimeout, { min: '10', max: '1800' });
+    const testOut = h('pre', { class: 'small', hidden: true, style: { whiteSpace: 'pre-wrap', margin: 0 } });
+    const testWeb = async btn => {
+      const saved = { ...state.settings };
+      Object.assign(state.settings, { searchProvider: provider.value, ollamaKey: okey.value.trim(), jinaKey: jkey.value.trim(), proxyUrl: proxy.value.trim(), searxngUrl: searx.value.trim() });
+      btn.disabled = true; testOut.hidden = false; testOut.textContent = 'Testing…';
+      const lines = [];
+      try { const r = await webSearch('ollama api documentation', 3); lines.push(`✓ search works via ${r.provider}: ${r.results[0]?.title || ''}`); } catch (e) { lines.push('✗ search: ' + e.message); }
+      try { const r = await webFetch('https://github.com/ollama/ollama/blob/main/docs/api.md'); lines.push(`✓ fetch works via ${r.via} (${r.content.length} chars)`); } catch (e) { lines.push('✗ fetch: ' + e.message); }
+      Object.assign(state.settings, saved);
+      testOut.textContent = lines.join('\n'); btn.disabled = false;
+    };
     const fb = h('textarea', { rows: 4, placeholder: 'Paste a Firebase web config here to override js/config.js (JSON or the JS object from the console). Leave empty to use the built-in one.' });
     fb.value = getFirebaseOverrideText();
 
@@ -97,6 +117,16 @@ export function openSettings(tab = 'general') {
       field('Permissions', perm),
       check(autoC, 'Auto-continue when the agent stops with unfinished todos'),
       check(autoK, 'Auto-compact old messages when the context window fills up'),
+      section('Internet (web_search, web_fetch)'),
+      check(web, 'Let agents search the web and read pages (docs, SDK references)'),
+      field('Search provider', provider),
+      h('div', { class: 'grid2' }, field('Ollama API key (best search + fetch)', okey), field('Jina API key', jkey)),
+      h('div', { class: 'grid2' }, field('CORS proxy (optional)', proxy), field('SearXNG URL (optional)', searx)),
+      h('div', { class: 'dim small' }, 'Pages are read directly when the site allows it, otherwise through Jina Reader (free, no key) or your proxy. Without keys, search uses DuckDuckGo through Jina Reader. Keys are stored with your settings (only you can read them).'),
+      h('div', { class: 'row' }, h('button', { class: 'btn sm', type: 'button', onclick: e => testWeb(e.currentTarget) }, 'Test internet access')), testOut,
+      section('Stall detection'),
+      h('div', { class: 'grid2' }, field('Max wait for the first token (seconds)', first), field('Max silence between tokens (seconds)', idle)),
+      check(retry, 'Retry a stalled step automatically once'),
       section('Notifications'),
       check(sound, 'Play a sound when the agent finishes, fails or needs you'),
       h('div', { class: 'row' }, h('span', { class: 'dim small' }, 'Volume'), vol,
@@ -118,6 +148,11 @@ export function openSettings(tab = 'general') {
                 think: think.value, perm: perm.value,
                 autoContinue: autoC.checked, autoCompact: autoK.checked,
                 sound: sound.checked, volume: +vol.value, desktopNotify: desk.checked,
+                webEnabled: web.checked, searchProvider: provider.value, ollamaKey: okey.value.trim(), jinaKey: jkey.value.trim(),
+                proxyUrl: proxy.value.trim(), searxngUrl: searx.value.trim(),
+                firstTokenTimeout: Math.min(3600, Math.max(10, +first.value || DEFAULT_SETTINGS.firstTokenTimeout)),
+                idleTimeout: Math.min(1800, Math.max(10, +idle.value || DEFAULT_SETTINGS.idleTimeout)),
+                autoRetryStall: retry.checked,
               });
               if (s.desktopNotify && !(await ensureNotifyPermission())) { s.desktopNotify = false; toast('Notifications are blocked in this browser'); }
               saveSettings();
@@ -241,7 +276,7 @@ export function openAccount() {
           h('a', { href: '#', onclick: async e => { e.preventDefault(); try { await resendVerification(); toast('Verification email sent'); } catch (x) { toast(authErrorText(x)); } } }, 'Resend verification email')) : null,
         local.hasData() ? h('button', { class: 'btn', type: 'button', onclick: e => importLocal(e.currentTarget, local) }, "Copy this browser's local data into my account") : null,
         h('div', { class: 'row end' },
-          h('button', { class: 'btn danger', type: 'button', onclick: async () => { close(); state.abort?.abort(); await signOut(); } }, 'Sign out'),
+          h('button', { class: 'btn danger', type: 'button', onclick: async () => { close(); abortAll(); await signOut(); } }, 'Sign out'),
           h('button', { class: 'btn', type: 'button', onclick: close }, 'Close')));
     } else if (getFirebaseConfig()) {
       box.append(
@@ -249,7 +284,7 @@ export function openAccount() {
         h('div', { class: 'dim small' }, 'Sign in with Google or email to sync servers, API keys, ratings and conversations across devices. You can copy your local data into the account afterwards.'),
         h('div', { class: 'row end' },
           h('button', { class: 'btn', type: 'button', onclick: close }, 'Close'),
-          h('button', { class: 'btn primary', type: 'button', onclick: () => { close(); state.abort?.abort(); showAuth(); } }, 'Sign in')));
+          h('button', { class: 'btn primary', type: 'button', onclick: () => { close(); abortAll(); showAuth(); } }, 'Sign in')));
     } else {
       box.append(
         h('div', {}, 'Local mode: everything is saved in this browser only.'),

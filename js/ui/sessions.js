@@ -1,13 +1,25 @@
 // Conversations: sidebar list, open/new/rename/delete, incremental persistence, todos panel.
-import { state, on } from '../core/state.js';
+import { state, on, emit } from '../core/state.js';
 import { $, h, toast, confirmDialog, promptDialog } from '../util/dom.js';
 import { uid } from '../util/misc.js';
-import { getMainView, renderThread } from './chat.js';
+import { threadView, showThread, dropThread, renderThread } from './chat.js';
 import { setAgent, updateTop, updateStatus } from './workspace.js';
+import { runs, isRunning } from './runs.js';
 
 export function initSessions() {
   $('#sess-q').addEventListener('input', paintSessions);
   on('user', () => { state.session = null; });
+  on('runs', paintSessions);
+}
+
+/** Make `s` the visible conversation. Views of idle conversations are dropped when you leave them. */
+function display(s) {
+  const prev = state.session;
+  if (prev && prev !== s && !isRunning(prev.id)) dropThread(prev.id);
+  state.session = s;
+  renderSession();
+  paintSessions();
+  emit('session', s);
 }
 
 export const draftSession = () => ({
@@ -36,8 +48,8 @@ export function persistSession(s = state.session) {
   if (!s || !state.store) return chain;
   s._draft = false;
   s.updated = Date.now();
-  if (state.conn) s.url = state.conn.url;
-  if (state.model) s.model = state.model;
+  if (!s.url && state.conn) s.url = state.conn.url;
+  if (!s.model && state.model) s.model = state.model;
   chain = chain.then(async () => {
     const from = s._synced || 0;
     const msgs = s.messages.slice(from).map(forStorage);
@@ -63,24 +75,23 @@ export async function loadSessions() {
 }
 
 export async function openSession(id) {
-  if (state.busy) return toast('Wait for the agent to finish, or press Stop');
-  const meta = state.sessions.find(s => s.id === id);
-  if (!meta) return;
-  let messages;
-  try { messages = await state.store.loadMessages(id); } catch (e) { return toast('Could not load: ' + e.message); }
-  state.session = { ...meta, messages, _synced: messages.length };
-  if (meta.model && meta.model !== state.model && state.models.some(m => m.name === meta.model)) { state.model = meta.model; updateTop(); }
-  if (meta.agent) setAgent(meta.agent);
-  renderSession();
-  paintSessions();
   $('#left').classList.remove('open');
+  if (state.session?.id === id) return;
+  let s = runs.get(id)?.session; // running: use the live object, it is still being written
+  if (!s) {
+    const meta = state.sessions.find(x => x.id === id);
+    if (!meta) return;
+    let messages;
+    try { messages = await state.store.loadMessages(id); } catch (e) { return toast('Could not load: ' + e.message); }
+    s = { ...meta, messages, _synced: messages.length };
+  }
+  if (s.model && s.model !== state.model && state.models.some(m => m.name === s.model)) { state.model = s.model; updateTop(); }
+  if (s.agent) setAgent(s.agent);
+  display(s);
 }
 
 export function newSession() {
-  if (state.busy) return toast('Wait for the agent to finish, or press Stop');
-  state.session = draftSession();
-  renderSession();
-  paintSessions();
+  display(draftSession());
   $('#inp').focus();
 }
 
@@ -98,11 +109,15 @@ function emptyState() {
 }
 
 export function renderSession() {
-  const view = getMainView();
   const s = state.session;
-  view.clear();
-  if (!s.messages.length) view.root.append(emptyState());
-  else renderThread(view, s.messages);
+  const view = threadView(s);
+  if (!view.rendered) {
+    view.clear();
+    if (!s.messages.length) view.root.append(emptyState());
+    else renderThread(view, s.messages);
+    view.rendered = true;
+  }
+  showThread(view);
   $('#title').textContent = s.title;
   renderTodos();
   updateStatus();
@@ -139,10 +154,14 @@ export function paintSessions() {
     if (q && !(s.title || '').toLowerCase().includes(q)) continue;
     const g = dayGroup(s.updated || s.created || 0);
     if (g !== group) { group = g; box.append(h('div', { class: 'sgroup' }, g)); }
+    const rec = runs.get(s.id);
+    const waiting = rec && ['approval', 'question'].includes(rec.run.status.phase);
     box.append(h('div', {
-      class: 'si' + (s.id === state.session?.id ? ' on' : ''), title: 'Double-click to rename',
+      class: 'si' + (s.id === state.session?.id ? ' on' : '') + (rec ? ' running' : '') + (waiting ? ' attention' : ''),
+      title: rec ? 'Agent running: click to watch' : 'Double-click to rename',
       onclick: () => openSession(s.id), ondblclick: () => renameSession(s.id),
     },
+    rec ? h('span', { class: 'rb-dot', title: waiting ? 'Waiting for you' : 'Running' }) : null,
     h('div', { class: 'si-t' }, h('div', {}, s.title || 'Untitled'), s.model ? h('div', { class: 'si-m' }, s.model) : null),
     h('button', { class: 'x', type: 'button', title: 'Delete', onclick: e => { e.stopPropagation(); deleteSession(s.id); } }, '×')));
   }
@@ -161,7 +180,7 @@ async function renameSession(id) {
 }
 
 async function deleteSession(id) {
-  if (state.busy && state.session?.id === id) return toast('Stop the agent first');
+  if (isRunning(id)) return toast('Stop the agent in that conversation first');
   if (!(await confirmDialog('Delete this conversation? This cannot be undone.', 'Delete'))) return;
   try { await state.store.deleteSession(id); } catch (e) { return toast('Could not delete: ' + e.message); }
   state.sessions = state.sessions.filter(s => s.id !== id);
