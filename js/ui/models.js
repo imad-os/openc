@@ -7,6 +7,7 @@ import { strength, paramBillions } from '../core/strength.js';
 import { show, current } from './views.js';
 import { enterWorkspace, updateTop } from './workspace.js';
 import { persistConn, showConnect } from './connect.js';
+import { remoteTarget, loadRemoteModels } from './remote.js';
 
 const CAP_COLORS = { completion: '#8b98a8', vision: '#b794f6', tools: '#4ade80', thinking: '#fbbf24', audio: '#f472b6', embedding: '#2dd4bf', insert: '#8b98a8' };
 const COUNTERS = ['runs', 'requests', 'evalTokens', 'evalNs', 'promptTokens', 'toolCalls', 'toolErrors'];
@@ -29,6 +30,7 @@ export function initModels() {
 }
 
 export async function loadModels() {
+  if (remoteTarget()) return loadRemoteModels(state.conn); // the phone cannot reach the PC's localhost: use the PC's list
   const { models, running } = await listModels(state.conn);
   state.running = running;
   state.models = models.map(m => ({ ...m, name: m.name || m.model, caps: Array.isArray(m.capabilities) ? m.capabilities : null }));

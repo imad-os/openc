@@ -118,6 +118,10 @@ export class CloudStore {
   async saveAgent(a) { await this.F.setDoc(this.doc('agents', a.id), clean(pick({ ...a, updated: Date.now() }, AGENT_FIELDS))); }
   async deleteAgent(id) { await this.F.deleteDoc(this.doc('agents', id)); }
 
+  async getSession(id) {
+    const d = await this.F.getDoc(this.doc('sessions', id));
+    return d.exists() ? { id: d.id, ...d.data() } : null;
+  }
   async listSessions() {
     const F = this.F;
     const q = await F.getDocs(F.query(this.col('sessions'), F.orderBy('updated', 'desc'), F.limit(300)));

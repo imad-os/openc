@@ -63,10 +63,13 @@ function summaryLine(d) {
 }
 
 /* ---------- status bar above the composer ---------- */
+let remoteBar = null; // set by ui/remote.js: paints a conversation running on another device
+export const setRemoteBar = fn => { remoteBar = fn; };
+
 function paintBar() {
   const bar = $('#runbar');
   const rec = currentRun();
-  if (!rec) { bar.hidden = true; return; }
+  if (!rec) { if (!remoteBar?.(bar)) bar.hidden = true; return; }
   const d = { ...describe(rec), phaseKey: rec.run.status.phase };
   bar.hidden = false;
   bar.className = 'runbar ' + d.health;

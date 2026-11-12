@@ -125,3 +125,14 @@ node test/mock-ollama.mjs 11555 &
 python3 -m http.server 8765 &
 node test/e2e.mjs        # needs playwright
 ```
+
+
+## Remote PC (keep agents running while your phone is closed)
+
+A browser tab on your PC can act as a **host**. From your phone you pick *Run on → that PC*, send a request and close the phone; the agent keeps working on the PC and you can watch, approve, answer or stop it from the phone at any time.
+
+1. Deploy the updated rules (new `hosts`, `commands`, `live`, `catalogs` collections): `firebase deploy --only firestore:rules`, or paste `firestore.rules` into Firebase console → Firestore → Rules.
+2. On the PC: open the app, sign in, tap **▶ This device** (top bar) → **Use this device as a remote host** → *Start hosting*. Keep the tab open and the PC awake. Ollama must be reachable from that browser at the saved server address (e.g. `http://localhost:11434`).
+3. On the phone: sign in with the same account, tap **▶ This device** → choose the PC. Connect/add a server as usual (the model list comes from the PC), then chat.
+
+How it works: the phone writes a command document; the host tab runs the normal agent loop and saves messages to Firestore as it goes; the phone listens to those documents live. Approvals and questions are shown on both screens, whoever answers first wins. Files the agent creates stay in the PC's browser. Images are not sent to remote PCs.

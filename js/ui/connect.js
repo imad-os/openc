@@ -7,6 +7,7 @@ import { show } from './views.js';
 import { loadModels, showModels } from './models.js';
 import { enterWorkspace } from './workspace.js';
 import { openAccount } from './modals.js';
+import { remoteTarget, loadRemoteModels } from './remote.js';
 
 const host = u => { try { return new URL(u).host; } catch { return u; } };
 
@@ -107,7 +108,14 @@ export async function persistConn(c) {
   const data = { ...c };
   if (c._noKey) data.key = '';
   delete data._noKey;
-  try { await state.store.saveConnection(data); } catch (e) { toast('Could not save server: ' + e.message); }
+  try {
+    await state.store.saveConnection(data);
+    toast(state.store.kind === 'cloud' ? '✓ Server saved to your Firebase account' : '✓ Server saved in this browser (sign in to sync it to Firebase)', 3500);
+    return true;
+  } catch (e) {
+    toast('✗ Could not save server: ' + e.message, 7000);
+    return false;
+  }
 }
 
 export async function connect(conn, { resume }) {
@@ -119,9 +127,16 @@ export async function connect(conn, { resume }) {
   try {
     state.conn = conn;
     state.model = null;
-    await loadModels();
-    conn.lastUsed = Date.now();
-    await persistConn(conn);
+    if (remoteTarget()) {
+      // Remote PC mode: save first, then ask the PC to list the server's models.
+      conn.lastUsed = Date.now();
+      await persistConn(conn);
+      await loadRemoteModels(conn, { wait: true });
+    } else {
+      await loadModels();
+      conn.lastUsed = Date.now();
+      await persistConn(conn);
+    }
     try { state.modelMeta = await state.store.listModelMeta(conn.url); } catch { state.modelMeta = {}; }
     emit('conn');
     if (resume && conn.lastModel && state.models.some(m => m.name === conn.lastModel)) {

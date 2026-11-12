@@ -16,6 +16,7 @@ import { initSessions, loadSessions } from './ui/sessions.js';
 import { initChat } from './ui/chat.js';
 import { applyDisplay } from './ui/display.js';
 import { initRuns, abortAll } from './ui/runs.js';
+import { initRemote } from './ui/remote.js';
 
 async function loadUserData() {
   let settings = {};
@@ -79,6 +80,7 @@ async function boot() {
   initComposer();
   initFiles();
   initSessions();
+  initRemote();
 
   if (!getFirebaseConfig()) return startLocal();
   showAuth({ loading: true });

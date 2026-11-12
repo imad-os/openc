@@ -11,6 +11,7 @@ import { fsFor } from './files.js';
 import { recordModelStats, showModels } from './models.js';
 import { cycleAgent, setAgent } from './workspace.js';
 import { openAgents, openSettings } from './modals.js';
+import { remoteTarget, remoteRunning, sendRemote, stopRemote } from './remote.js';
 
 const pending = []; // base64 images
 
@@ -30,7 +31,7 @@ export function initComposer() {
     if (files.length) { e.preventDefault(); addImages(files); }
   });
   $('#b-send').addEventListener('click', send);
-  $('#b-stop').addEventListener('click', () => currentRun()?.controller.abort());
+  $('#b-stop').addEventListener('click', () => { if (currentRun()) currentRun().controller.abort(); else stopRemote(); });
   $('#b-att').addEventListener('click', () => $('#f-img').click());
   $('#f-img').addEventListener('change', e => { addImages([...e.target.files]); e.target.value = ''; });
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && currentRun() && !document.querySelector('.modal,.popover,.cb-out.full')) currentRun().controller.abort(); });
@@ -40,7 +41,7 @@ export function initComposer() {
 
 /** Send/Stop reflect the conversation on screen; other conversations may be running too. */
 export function updateComposer() {
-  const running = !!currentRun();
+  const running = !!currentRun() || remoteRunning();
   state.busy = running;
   $('#b-send').hidden = running;
   $('#b-stop').hidden = !running;
@@ -108,6 +109,13 @@ export async function send() {
   unlockAudio();
 
   const s = state.session || (state.session = draftSession());
+  const host = remoteTarget();
+  if (host) {
+    if (pending.length) return toast('Images are not sent to a remote PC yet. Remove them or run on this device.');
+    inp.value = '';
+    autosize();
+    return sendRemote(text, host);
+  }
   const view = threadView(s);
   view.rendered = true;
   if (!s.messages.length) view.clear();
@@ -123,12 +131,23 @@ export async function send() {
   $('#title').textContent = s.title;
   inp.value = '';
   autosize();
+  return runTurn(s, { agent, conn: state.conn, model: state.model, models: state.models });
+}
 
-  const run = createRun({ fs: fsFor(s) });
+/**
+ * Run the agent on conversation `s` (its last message is the new user message) and finish up:
+ * footer, stats, saving, notifications. Used by send() and by the remote host.
+ * opts.remote: { ask({kind,text,options}) → {promise, cancel} } lets another device answer approvals/questions.
+ * Resolves { error, stopped, result }.
+ */
+export async function runTurn(s, { agent, conn, model, models, remote = null, onRun = null }) {
+  const view = threadView(s);
+  const run = createRun({ conn, model, models, fs: fsFor(s) });
   const controller = new AbortController();
   const signal = controller.signal;
-  const rec = { session: s, run, controller, agentName: agent.name, model: state.model, conn: state.conn };
+  const rec = { session: s, run, controller, agentName: agent.name, model, conn };
   registerRun(s.id, rec);
+  onRun?.(rec);
   persistSession(s);
   const visible = () => state.session === s;
   const where = () => (visible() ? '' : ` in "${s.title}"`);
@@ -141,14 +160,30 @@ export async function send() {
     confirm: async (card, def) => {
       notify('attention', 'Approval needed' + where(), `${card.name} is waiting for you`, state.settings);
       if (!visible()) toast(`"${s.title}" needs your approval — open it from the running list`, 5000);
-      const answer = await card.confirm(def.perm, signal);
+      let answer;
+      if (remote) {
+        // Whoever answers first wins: the card on this screen, or the remote device.
+        const local = new AbortController();
+        signal.addEventListener('abort', () => local.abort(), { once: true });
+        const r = remote.ask({ kind: 'approval', text: describeCard(card), options: ['allow', 'always', 'deny'] });
+        answer = await Promise.race([card.confirm(def.perm, local.signal), r.promise]);
+        r.cancel();
+        local.abort();
+      } else answer = await card.confirm(def.perm, signal);
       if (answer === 'always') { state.settings.perm = def.perm === 'edit' ? 'edits' : 'auto'; saveSettings(); }
       return answer === 'allow' || answer === 'always';
     },
-    askUser: (question, options, card) => {
+    askUser: async (question, options, card) => {
       notify('attention', 'The agent has a question' + where(), question, state.settings);
       if (!visible()) toast(`"${s.title}" has a question for you`, 5000);
-      return card.ask(question, options, signal);
+      if (!remote) return card.ask(question, options, signal);
+      const local = new AbortController();
+      signal.addEventListener('abort', () => local.abort(), { once: true });
+      const r = remote.ask({ kind: 'question', text: question, options: options || [] });
+      const answer = await Promise.race([card.ask(question, options, local.signal), r.promise]);
+      r.cancel();
+      local.abort();
+      return answer;
     },
   };
 
@@ -178,4 +213,12 @@ export async function send() {
       error ? error.message : firstLine(result?.text) || s.title, state.settings);
     if (!visible()) toast(`${error ? '⚠' : '✓'} "${s.title}" ${error ? 'failed' : 'finished'}`, 5000);
   }
+  return { error, stopped, result };
+}
+
+/** Short text describing what a tool card wants to do (shown on the remote device). */
+function describeCard(card) {
+  const title = card.el.querySelector('.th')?.textContent || card.name;
+  const body = card.el.querySelector('.tb')?.textContent || '';
+  return (title + '\n' + body).trim().slice(0, 1500);
 }

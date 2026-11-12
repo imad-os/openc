@@ -71,6 +71,35 @@ service cloud.firestore {
         && (!('files' in data()) || data().files in ['session', 'shared']);
     }
 
+    // Remote control: a PC browser tab ("host") and the commands other devices send it.
+    function validHost() {
+      return onlyKeys(['name', 'platform', 'lastSeen', 'busy']) && hasKeys(['name', 'lastSeen'])
+        && isStr(data().name, 1, 60) && optStr('platform', 100) && optTime('lastSeen') && optCount('busy');
+    }
+
+    function validCommand() {
+      return onlyKeys(['host', 'type', 'session', 'text', 'conn', 'model', 'agent', 'status', 'error', 'created', 'pending', 'answer'])
+        && hasKeys(['host', 'type', 'status']) && isStr(data().host, 1, 100)
+        && data().type in ['send', 'stop', 'answer', 'refresh'] && data().status in ['pending', 'taken', 'done', 'error']
+        && optStr('session', 100) && optStr('text', 100000) && optStr('conn', 100) && optStr('model', 300)
+        && optStr('agent', 64) && optStr('error', 2000) && optStr('pending', 100) && optStr('answer', 20000)
+        && optTime('created');
+    }
+
+    function validCatalog() {
+      return onlyKeys(['servers', 'updated']) && hasKeys(['servers']) && optList('servers', 50) && optTime('updated');
+    }
+
+    function validLive() {
+      return onlyKeys(['host', 'hostName', 'state', 'phase', 'detail', 'health', 'step', 'maxSteps', 'since', 'started', 'updated', 'title',
+                       'askKind', 'askText', 'askOptions', 'askId'])
+        && hasKeys(['host', 'state']) && isStr(data().host, 1, 100) && data().state in ['running', 'idle']
+        && optStr('hostName', 60) && optStr('phase', 100) && optStr('detail', 2000) && optStr('health', 20) && optStr('title', 200)
+        && optNum('step', 0, 100000) && optNum('maxSteps', 0, 100000)
+        && optTime('since') && optTime('started') && optTime('updated')
+        && optStr('askKind', 20) && optStr('askText', 4000) && optList('askOptions', 20) && optStr('askId', 100);
+    }
+
     function validMessage() {
       return onlyKeys(['seq', 'role', 'json']) && hasKeys(['seq', 'role', 'json'])
         && data().seq is int && data().seq >= 0 && data().seq <= 1000000
@@ -98,6 +127,26 @@ service cloud.firestore {
       match /agents/{id} {
         allow read, delete: if isOwner(uid);
         allow create, update: if isOwner(uid) && validId(id) && validAgent();
+      }
+
+      match /hosts/{id} {
+        allow read, delete: if isOwner(uid);
+        allow create, update: if isOwner(uid) && validId(id) && validHost();
+      }
+
+      match /commands/{id} {
+        allow read, delete: if isOwner(uid);
+        allow create, update: if isOwner(uid) && validId(id) && validCommand();
+      }
+
+      match /catalogs/{id} {
+        allow read, delete: if isOwner(uid);
+        allow create, update: if isOwner(uid) && validId(id) && validCatalog();
+      }
+
+      match /live/{id} {
+        allow read, delete: if isOwner(uid);
+        allow create, update: if isOwner(uid) && validId(id) && validLive();
       }
 
       match /sessions/{sid} {

@@ -394,3 +394,28 @@ pre.cmd { margin: 0; background: var(--code-bg); border: 1px solid var(--line); 
   .cb-act button { padding: 4px 8px }
   .popover { left: 8px !important; right: 8px; width: auto }
 }
+
+/* remote control */
+.runon { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: none }
+.runon.on { border-color: var(--ac); color: var(--ac) }
+.runbar .rb-ask { display: flex; flex-direction: column; gap: 6px; color: var(--fg) }
+.runbar .rb-asktext { white-space: pre-wrap; max-height: 9em; overflow: auto; font-family: var(--mono, monospace); font-size: 0.8rem }
+
+.runon { display: inline-flex; align-items: center; gap: 6px }
+.runon .rl { overflow: hidden; text-overflow: ellipsis }
+.hdot { width: 9px; height: 9px; border-radius: 50%; flex: none; display: inline-block; background: var(--dim) }
+.hdot.ready { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 25%, transparent) }
+.hdot.busy { background: var(--warn); animation: pulse 1.2s infinite }
+.hdot.off { background: transparent; border: 2px solid var(--dim) }
+.hdot.local { background: var(--ac) }
+.hosts { display: flex; flex-direction: column; gap: 8px; margin: 10px 0 }
+.hcard { display: flex; gap: 8px; align-items: stretch; border: 1px solid var(--line); border-radius: 10px; background: var(--p1) }
+.hcard.sel { border-color: var(--ac); background: color-mix(in srgb, var(--ac) 10%, var(--p1)) }
+.hcard.offline .hc-main { opacity: 0.7 }
+.hcard > .btn { align-self: center; margin-right: 8px }
+.hc-main { flex: 1; min-width: 0; padding: 10px 12px; cursor: pointer; display: flex; flex-direction: column; gap: 3px }
+.hc-top { display: flex; align-items: center; gap: 8px }
+.hc-top b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.hc-sel { margin-left: auto; color: var(--ac); font-size: 0.8rem; white-space: nowrap }
+.hc-status { font-size: 0.82rem; font-weight: 600 }
+.hc-status.ready { color: var(--ok) } .hc-status.busy { color: var(--warn) } .hc-status.off { color: var(--dim) }
