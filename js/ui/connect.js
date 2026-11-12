@@ -105,13 +105,13 @@ async function onSubmit(e) {
 }
 
 /** Save a server (without the key if the user opted out). */
-export async function persistConn(c) {
+export async function persistConn(c, { quiet = false } = {}) {
   const data = { ...c };
   if (c._noKey) data.key = '';
   delete data._noKey;
   try {
     await state.store.saveConnection(data);
-    toast(state.store.kind === 'cloud' ? '✓ Server saved to your Firebase account' : '✓ Server saved in this browser (sign in to sync it to Firebase)', 3500);
+    if (!quiet) toast(state.store.kind === 'cloud' ? '✓ Server saved to your Firebase account' : '✓ Server saved in this browser (sign in to sync it to Firebase)', 3500);
     return true;
   } catch (e) {
     toast('✗ Could not save server: ' + e.message, 7000);

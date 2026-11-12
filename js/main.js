@@ -18,6 +18,7 @@ import { applyDisplay } from './ui/display.js';
 import { initRuns, abortAll } from './ui/runs.js';
 import { initRemote } from './ui/remote.js';
 import { initMax } from './ui/max.js';
+import { initServers } from './ui/servers.js';
 import { initRouter, restore } from './ui/router.js';
 
 async function loadUserData() {
@@ -83,6 +84,7 @@ async function boot() {
   initFiles();
   initSessions();
   initRemote();
+  initServers();
   initMax();
   initRouter();
 

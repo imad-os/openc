@@ -150,6 +150,9 @@ async function answerRemote(id, answer) {
   catch (e) { toast('Could not send: ' + e.message); }
 }
 
+/** The PC's list of all servers and their models (for the merged models view). */
+export const getRemoteCatalog = () => R.getCatalog(remoteTarget());
+
 /** Models of a server as the PC sees them (the phone cannot reach the PC's localhost). */
 export async function loadRemoteModels(conn, { wait = false } = {}) {
   const host = remoteTarget();

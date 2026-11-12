@@ -433,3 +433,9 @@ pre.cmd { margin: 0; background: var(--code-bg); border: 1px solid var(--line); 
 .failrate .f { color: var(--dim); font-weight: 600 }
 .failrate.bad .f { color: #ef4444 }
 .failrate .t { color: var(--fg) }
+
+/* merged servers */
+.tag.srvtag{background:rgba(88,166,255,.15);color:#79b8ff;border:1px solid rgba(88,166,255,.35)}
+.srvchip{display:inline-flex;align-items:center;gap:6px}
+.sdot{width:8px;height:8px;border-radius:50%;background:#888;display:inline-block}
+.sdot.ok{background:#3fb950}.sdot.error{background:#f85149}.sdot.loading{background:#d29922}

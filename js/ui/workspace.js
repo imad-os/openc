@@ -3,7 +3,8 @@ import { state, on, primaryAgents, subagents, currentAgent, modelCaps, modelInfo
 import { $, h, popover, toast } from '../util/dom.js';
 import { fmt } from '../util/misc.js';
 import { show } from './views.js';
-import { showModels, pickModel, starsEl, capTag, meta, statsText, strengthEl, sortModels, reliabilityEl } from './models.js';
+import { showModels, pickModel, starsEl, capTag, meta, statsText, strengthEl, sortModels, reliabilityEl, pickerItems } from './models.js';
+import { serverLabel } from './servers.js';
 import { paintSessions, renderSession, draftSession, newSession } from './sessions.js';
 import { refreshFiles } from './files.js';
 import { openSettings, openAgents, openAccount } from './modals.js';
@@ -102,6 +103,7 @@ export function updateTop() {
   chip.replaceChildren(...[
     meta(state.model).fav ? h('span', { class: 'favdot' }, '♥') : null,
     h('b', {}, state.model || 'Choose a model'),
+    state.model && state.servers.length > 1 ? h('span', { class: 'tag srvtag' }, '🖥 ' + serverLabel(state.conn)) : null,
     state.model ? strengthEl(state.model, { bar: false }) : null,
     ...(m?.caps || []).filter(c => c !== 'completion').map(c => capTag(c, true)),
     h('span', { class: 'caret' }, '▾'),
@@ -144,17 +146,17 @@ function openModelPicker(anchor) {
     const q = h('input', { placeholder: 'Search models…' });
     const list = h('div', { class: 'pop-list' });
     const row = m => h('div', {
-      class: 'pop-row' + (m.name === state.model ? ' on' : ''),
-      onclick: () => { close(); pickModel(m.name, { stay: true }); },
+      class: 'pop-row' + (m.name === state.model && (!m._srv || m._srv.conn.id === state.conn?.id) ? ' on' : ''),
+      onclick: () => { close(); pickModel(m.name, { stay: true, srv: m._srv || null }); },
     },
-    h('div', { class: 'pr-main' }, h('span', { class: 'pr-name' }, m.name), ...(m.caps || []).filter(c => c !== 'completion').map(c => capTag(c, true))),
-    h('div', { class: 'pr-sub' }, strengthEl(m.name), starsEl(m.name, { readonly: true }), reliabilityEl(m.name), h('span', { class: 'dim small' }, statsText(m.name, true))));
+    h('div', { class: 'pr-main' }, h('span', { class: 'pr-name' }, m.name), m._srv ? h('span', { class: 'tag srvtag' }, '🖥 ' + serverLabel(m._srv.conn)) : null, ...(m.caps || []).filter(c => c !== 'completion').map(c => capTag(c, true))),
+    h('div', { class: 'pr-sub' }, strengthEl(m.name, { srv: m._srv }), starsEl(m.name, { readonly: true, srv: m._srv }), reliabilityEl(m.name, m._srv), h('span', { class: 'dim small' }, statsText(m.name, true, m._srv))));
     const paint = () => {
       list.innerHTML = '';
       const term = q.value.toLowerCase();
-      const ms = visibleModels().filter(m => !term || m.name.toLowerCase().includes(term));
-      const favs = sortModels(ms.filter(m => meta(m.name).fav), 'rating');
-      const recent = sortModels(ms.filter(m => !meta(m.name).fav && meta(m.name).lastUsed), 'recent').slice(0, 5);
+      const ms = pickerItems().filter(m => !term || m.name.toLowerCase().includes(term));
+      const favs = sortModels(ms.filter(m => meta(m.name, m._srv).fav), 'rating');
+      const recent = sortModels(ms.filter(m => !meta(m.name, m._srv).fav && meta(m.name, m._srv).lastUsed), 'recent').slice(0, 5);
       const shown = new Set([...favs, ...recent]);
       const rest = sortModels(ms.filter(m => !shown.has(m)), 'strength');
       const section = (title, arr) => { if (arr.length) { list.append(h('div', { class: 'pop-sec' }, title)); arr.forEach(m => list.append(row(m))); } };

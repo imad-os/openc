@@ -35,6 +35,7 @@ export const state = {
   store: null,       // LocalStore | CloudStore
   conn: null,        // { id, url, key, label, lastModel, ... }
   models: [],        // [{ name, caps, details, size, ... }]
+  servers: [],       // all saved servers: [{ conn, models, meta, running, status, error }] (see ui/servers.js)
   running: {},       // models loaded in memory (/api/ps)
   modelMeta: {},     // model name -> { rating, fav, runs, evalTokens, ... } for current server
   model: null,
@@ -51,7 +52,8 @@ export const state = {
 
 /** Models to show in pickers; cloud models can be hidden in Settings. */
 export const isCloudModel = name => /[:-]cloud$/i.test(String(name || ''));
-export const visibleModels = () => (state.settings.hideCloud ? state.models.filter(m => !isCloudModel(m.name)) : state.models);
+export const visibleOf = list => (state.settings.hideCloud ? list.filter(m => !isCloudModel(m.name)) : list);
+export const visibleModels = () => visibleOf(state.models);
 export const modelInfo = (name = state.model) => state.models.find(m => m.name === name);
 export const modelCaps = (name = state.model) => modelInfo(name)?.caps || [];
 export const primaryAgents = () => state.agents.filter(a => a.mode === 'primary');
