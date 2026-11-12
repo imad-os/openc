@@ -10,7 +10,7 @@ import { persistConn, showConnect } from './connect.js';
 import { remoteTarget, loadRemoteModels } from './remote.js';
 
 const CAP_COLORS = { completion: '#8b98a8', vision: '#b794f6', tools: '#4ade80', thinking: '#fbbf24', audio: '#f472b6', embedding: '#2dd4bf', insert: '#8b98a8' };
-const COUNTERS = ['runs', 'requests', 'evalTokens', 'evalNs', 'promptTokens', 'toolCalls', 'toolErrors'];
+const COUNTERS = ['runs', 'requests', 'evalTokens', 'evalNs', 'promptTokens', 'toolCalls', 'toolErrors', 'fails'];
 const view = { q: '', filters: new Set(), sort: localStorage.getItem('oc2.msort') || 'smart' };
 
 export const meta = name => state.modelMeta[name] || {};
@@ -83,7 +83,9 @@ export function recordModelStats(name, inc, conn = state.conn) {
   const counters = {};
   for (const k of COUNTERS) if (inc[k]) { counters[k] = inc[k]; m[k] = (m[k] || 0) + inc[k]; }
   m.lastUsed = Date.now();
-  state.store.updateModelMeta(conn.url, name, { lastUsed: m.lastUsed }, counters).catch(e => console.warn('stats not saved', e));
+  const patch = { lastUsed: m.lastUsed };
+  if (inc.lastFail) { patch.lastFail = inc.lastFail; m.lastFail = inc.lastFail; }
+  state.store.updateModelMeta(conn.url, name, patch, counters).catch(e => console.warn('stats not saved', e));
   emit('model-meta', name);
 }
 
@@ -116,6 +118,16 @@ export function strengthEl(name, { bar = true } = {}) {
     h('b', { class: 'tier-' + s.tier }, s.tier),
     bar ? h('span', { class: 'sbar' }, h('i', { style: { width: s.score + '%', background: TIER_COLOR[s.tier] } })) : null,
     h('span', { class: 'dim' }, String(s.score)));
+}
+
+/** "7/10": failed (red) of all model requests (white). Shown only once there is something to count. */
+export function reliabilityEl(name) {
+  const m = meta(name);
+  const fails = m.fails || 0, total = (m.requests || 0) + fails;
+  if (!total) return null;
+  const tip = `${fails} of ${total} model requests failed (connection cut / EOF, out of memory, stalls, server errors).` +
+    (m.lastFail ? `\nLast error: ${m.lastFail}` : '') + '\nLower is better.';
+  return h('span', { class: 'failrate' + (fails ? ' bad' : ''), title: tip }, h('b', { class: 'f' }, String(fails)), '/', h('span', { class: 't' }, String(total)));
 }
 
 export function statsText(name, short = false) {
@@ -181,7 +193,7 @@ function paintModels() {
       h('div', { class: 'tags' }, m.caps ? (m.caps.length ? m.caps.map(c => capTag(c)) : h('span', { class: 'tag unk' }, 'unknown')) : h('span', { class: 'tag unk' }, 'detecting…')),
       h('div', { class: 'meta' }, [d.parameter_size, d.quantization_level, m.size ? fmt.gb(m.size) : null, d.context_length ? fmt.ctx(d.context_length) + ' ctx' : null, d.family]
         .filter(Boolean).map(x => h('span', {}, x))),
-      h('div', { class: 'mfoot' }, strengthEl(m.name), starsEl(m.name), state.running[m.name] ? h('span', { class: 'run', title: 'Loaded in memory' }, '● loaded') : null),
+      h('div', { class: 'mfoot' }, strengthEl(m.name), starsEl(m.name), reliabilityEl(m.name), state.running[m.name] ? h('span', { class: 'run', title: 'Loaded in memory' }, '● loaded') : null),
       stats ? h('div', { class: 'dim small' }, stats) : null));
   }
 }

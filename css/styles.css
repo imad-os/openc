@@ -427,3 +427,9 @@ pre.cmd { margin: 0; background: var(--code-bg); border: 1px solid var(--line); 
 .maxrow { display: flex; align-items: center; gap: 8px; padding: 6px 10px; cursor: pointer }
 .maxrow span.ellipsis { flex: 1; min-width: 0 }
 .maxroles { display: flex; flex-direction: column; gap: 4px; margin-top: 6px }
+
+/* reliability: failed (red) / total requests (white) */
+.failrate { font-variant-numeric: tabular-nums; font-size: 0.82rem; color: var(--fg); white-space: nowrap; cursor: help }
+.failrate .f { color: var(--dim); font-weight: 600 }
+.failrate.bad .f { color: #ef4444 }
+.failrate .t { color: var(--fg) }

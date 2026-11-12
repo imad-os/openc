@@ -149,3 +149,7 @@ Every attempt, worker and reviewer appears as a collapsible card in the conversa
 ## Addresses
 
 The address bar follows where you are: `#/connect` (servers), `#/models`, `#/chat` and `#/chat/<conversation id>`. Refreshing the page returns to the same screen and conversation (the last server and model are remembered in this browser), and the browser's Back button steps through your screens.
+
+## Model reliability
+
+Each model card (and the model switcher) shows `failed/total`, for example **7**/10: the red number is how many model requests failed (connection cut / EOF, out of memory, stalls, server errors) and the white number is all requests. Hover it to see the last error. Stats are stored with the model's other stats.

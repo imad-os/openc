@@ -315,7 +315,7 @@ async function importLocal(btn, local) {
     for (const m of data.models) {
       const { url, model, rating, fav, note, lastUsed, ...rest } = m;
       const inc = {};
-      for (const k of ['runs', 'requests', 'evalTokens', 'evalNs', 'promptTokens', 'toolCalls', 'toolErrors']) if (rest[k]) inc[k] = rest[k];
+      for (const k of ['runs', 'requests', 'evalTokens', 'evalNs', 'promptTokens', 'toolCalls', 'toolErrors', 'fails']) if (rest[k]) inc[k] = rest[k];
       await state.store.updateModelMeta(url, model, { rating, fav, note, lastUsed }, inc);
     }
     for (const a of data.agents) await state.store.saveAgent(a);

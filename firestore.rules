@@ -46,12 +46,12 @@ service cloud.firestore {
 
     function validModelMeta() {
       return onlyKeys(['url', 'model', 'rating', 'fav', 'note', 'lastUsed', 'updated',
-                       'runs', 'requests', 'evalTokens', 'evalNs', 'promptTokens', 'toolCalls', 'toolErrors'])
+                       'runs', 'requests', 'evalTokens', 'evalNs', 'promptTokens', 'toolCalls', 'toolErrors', 'fails', 'lastFail'])
         && hasKeys(['url', 'model']) && isUrl(data().url) && isStr(data().model, 1, 300)
         && optNum('rating', 0, 5) && optBool('fav') && optStr('note', 2000)
         && optTime('lastUsed') && optTime('updated')
         && optCount('runs') && optCount('requests') && optCount('evalTokens') && optCount('evalNs')
-        && optCount('promptTokens') && optCount('toolCalls') && optCount('toolErrors');
+        && optCount('promptTokens') && optCount('toolCalls') && optCount('toolErrors') && optCount('fails') && optStr('lastFail', 300);
     }
 
     function validAgent() {

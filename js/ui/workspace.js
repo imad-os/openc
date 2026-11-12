@@ -3,7 +3,7 @@ import { state, on, primaryAgents, subagents, currentAgent, modelCaps, modelInfo
 import { $, h, popover, toast } from '../util/dom.js';
 import { fmt } from '../util/misc.js';
 import { show } from './views.js';
-import { showModels, pickModel, starsEl, capTag, meta, statsText, strengthEl, sortModels } from './models.js';
+import { showModels, pickModel, starsEl, capTag, meta, statsText, strengthEl, sortModels, reliabilityEl } from './models.js';
 import { paintSessions, renderSession, draftSession, newSession } from './sessions.js';
 import { refreshFiles } from './files.js';
 import { openSettings, openAgents, openAccount } from './modals.js';
@@ -148,7 +148,7 @@ function openModelPicker(anchor) {
       onclick: () => { close(); pickModel(m.name, { stay: true }); },
     },
     h('div', { class: 'pr-main' }, h('span', { class: 'pr-name' }, m.name), ...(m.caps || []).filter(c => c !== 'completion').map(c => capTag(c, true))),
-    h('div', { class: 'pr-sub' }, strengthEl(m.name), starsEl(m.name, { readonly: true }), h('span', { class: 'dim small' }, statsText(m.name, true))));
+    h('div', { class: 'pr-sub' }, strengthEl(m.name), starsEl(m.name, { readonly: true }), reliabilityEl(m.name), h('span', { class: 'dim small' }, statsText(m.name, true))));
     const paint = () => {
       list.innerHTML = '';
       const term = q.value.toLowerCase();

@@ -46,9 +46,10 @@ function mergeStats(parent, child) {
   parent.toolCalls += child.toolCalls;
   parent.toolErrors += child.toolErrors;
   for (const [m, st] of Object.entries(child.byModel)) {
-    const p = (parent.byModel[m] ||= { requests: 0, evalTokens: 0, evalNs: 0, promptTokens: 0, toolCalls: 0, toolErrors: 0 });
+    const p = (parent.byModel[m] ||= { requests: 0, evalTokens: 0, evalNs: 0, promptTokens: 0, toolCalls: 0, toolErrors: 0, fails: 0 });
     for (const k of Object.keys(p)) p[k] += st[k] || 0;
   }
+  if (child.lastFail) parent.lastFail = { ...(parent.lastFail || {}), ...child.lastFail };
 }
 
 function pickModels(cfg, run) {

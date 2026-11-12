@@ -208,7 +208,7 @@ export async function runTurn(s, { agent, conn, model, models, remote = null, on
     if (last >= 0) { s.messages[last]._run = summary; markDirty(s, last); }
     view.footer(summary, stopped ? '' : result?.text);
   }
-  for (const [model, st] of Object.entries(run.byModel)) recordModelStats(model, { runs: 1, ...st }, rec.conn);
+  for (const [model, st] of Object.entries(run.byModel)) recordModelStats(model, { runs: 1, ...st, lastFail: run.lastFail?.[model] }, rec.conn);
   await persistSession(s);
   unregisterRun(s.id);
   if (!visible()) dropThread(s.id); // re-rendered from storage when opened

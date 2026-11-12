@@ -76,6 +76,16 @@ function nudge(thread, view, text, label) {
   view.note('↻ ' + label, 'auto');
 }
 
+const ZERO_STATS = () => ({ requests: 0, evalTokens: 0, evalNs: 0, promptTokens: 0, toolCalls: 0, toolErrors: 0, fails: 0 });
+
+/** Count a failed model request (connection cut, EOF, out of memory, stall …) for the reliability score. */
+function noteFail(run, model, e) {
+  if (!model || e?.name === 'AbortError') return;
+  if (e instanceof HttpError && /support|think/i.test(e.detail || '')) return; // capability negotiation, not a failure
+  (run.byModel[model] ||= ZERO_STATS()).fails++;
+  (run.lastFail ||= {})[model] = String(e?.message || e).replace(/\s+/g, ' ').slice(0, 240);
+}
+
 /** Stream one model request with a per-step controller that the UI can abort to retry. */
 async function requestStep(run, body, block, signal, prefix, streamTools) {
   const S = state.settings;
@@ -96,7 +106,7 @@ async function requestStep(run, body, block, signal, prefix, streamTools) {
         conn: run.conn,
         firstTokenTimeout: nativeTools && first ? Math.max(first, 1800000) : first,
         idleTimeout: nativeTools && idle ? Math.max(idle, 1800000) : idle,
-        onRetry: (n, e) => setPhase(run, 'retrying', `${prefix}server error, retry ${n}: ${e.message}`),
+        onRetry: (n, e) => { noteFail(run, body.model, e); setPhase(run, 'retrying', `${prefix}server error, retry ${n}: ${e.message}`); },
         onChunk: (m, acc) => {
           const st = run.status;
           const now = Date.now();
@@ -127,6 +137,7 @@ async function requestStep(run, body, block, signal, prefix, streamTools) {
       });
     } catch (e) {
       const stalled = e instanceof StallError || (manual && !signal.aborted);
+      if (!signal.aborted && !manual) noteFail(run, body.model, e);
       if (!stalled || signal.aborted) throw e;
       if (attempt >= (manual ? 5 : S.autoRetryStall ? 1 : 0)) throw new Error(`The model stopped responding (${e.message}). The server may be overloaded, out of memory, or the model got stuck.`);
       block.reset();
@@ -163,7 +174,7 @@ export async function runAgent({ agent, thread, view, signal, run, hooks = {}, d
   const canWrite = names.some(n => TOOLS[n].perm === 'edit');
   const label = agent.name + (depth ? ' · subagent' : '');
   const prefix = depth ? `${agent.name}: ` : '';
-  const stats = (run.byModel[model] ||= { requests: 0, evalTokens: 0, evalNs: 0, promptTokens: 0, toolCalls: 0, toolErrors: 0 });
+  const stats = (run.byModel[model] ||= ZERO_STATS());
   const loop = { history: [], strikes: 0, stop: false };
   const nudges = { empty: 0, todos: 0 };
   const parentStep = run.status.step;
