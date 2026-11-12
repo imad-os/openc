@@ -18,6 +18,7 @@ import { applyDisplay } from './ui/display.js';
 import { initRuns, abortAll } from './ui/runs.js';
 import { initRemote } from './ui/remote.js';
 import { initMax } from './ui/max.js';
+import { initRouter, restore } from './ui/router.js';
 
 async function loadUserData() {
   let settings = {};
@@ -43,7 +44,7 @@ async function useStore(store) {
   }
   await loadUserData();
   emit('user');
-  showConnect();
+  await restore();
 }
 
 export const startLocal = () => { state.user = null; return useStore(new LocalStore()); };
@@ -83,6 +84,7 @@ async function boot() {
   initSessions();
   initRemote();
   initMax();
+  initRouter();
 
   if (!getFirebaseConfig()) return startLocal();
   showAuth({ loading: true });

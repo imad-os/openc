@@ -145,3 +145,7 @@ Tap **MAX** in the top bar (or type `/max` to switch it on and off) to choose ho
 - **Team**: a planner splits the task, workers (taking turns over the chosen models) build the parts in your workspace, and a reviewer checks the result and fixes problems.
 
 Every attempt, worker and reviewer appears as a collapsible card in the conversation. Attempts run one after another by default (one GPU runs one model at a time); choose "At the same time" if your server can handle it. MAX also works with the remote PC: the setting travels with the message.
+
+## Addresses
+
+The address bar follows where you are: `#/connect` (servers), `#/models`, `#/chat` and `#/chat/<conversation id>`. Refreshing the page returns to the same screen and conversation (the last server and model are remembered in this browser), and the browser's Back button steps through your screens.

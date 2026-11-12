@@ -50,7 +50,9 @@ let warned = false;
 /** Save metadata + messages not yet saved. Calls are serialized. */
 export function persistSession(s = state.session) {
   if (!s || !state.store) return chain;
+  const wasDraft = s._draft;
   s._draft = false;
+  if (wasDraft) emit('route'); // the address now gets the conversation id
   s.updated = Date.now();
   if (!s.url && state.conn) s.url = state.conn.url;
   if (!s.model && state.model) s.model = state.model;

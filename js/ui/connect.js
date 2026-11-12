@@ -6,6 +6,7 @@ import { normalizeUrl } from '../core/ollama.js';
 import { show } from './views.js';
 import { loadModels, showModels } from './models.js';
 import { enterWorkspace } from './workspace.js';
+import { openSession } from './sessions.js';
 import { openAccount } from './modals.js';
 import { remoteTarget, loadRemoteModels } from './remote.js';
 
@@ -118,7 +119,7 @@ export async function persistConn(c) {
   }
 }
 
-export async function connect(conn, { resume }) {
+export async function connect(conn, { resume, restore = null }) {
   const err = $('#c-err');
   const buttons = [...document.querySelectorAll('#v-connect button')];
   err.hidden = true;
@@ -139,7 +140,15 @@ export async function connect(conn, { resume }) {
     }
     try { state.modelMeta = await state.store.listModelMeta(conn.url); } catch { state.modelMeta = {}; }
     emit('conn');
-    if (resume && conn.lastModel && state.models.some(m => m.name === conn.lastModel)) {
+    if (restore) {
+      // coming back after a refresh: return to the screen / conversation from the address
+      if (restore.to === 'chat' && restore.model && state.models.some(m => m.name === restore.model)) {
+        state.model = restore.model;
+        emit('model');
+        enterWorkspace();
+        if (restore.session) await openSession(restore.session);
+      } else showModels();
+    } else if (resume && conn.lastModel && state.models.some(m => m.name === conn.lastModel)) {
       state.model = conn.lastModel;
       emit('model');
       enterWorkspace();
