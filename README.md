@@ -156,3 +156,6 @@ Each model card (and the model switcher) shows `failed/total`, for example **7**
 
 ## Several servers at once
 With two or more saved servers the **Models** screen and the model switcher show every server's models in one list. Each model carries its server name as a tag, and chips at the top filter by server (green/red dot = reachable or not). Ratings, favourites and the `failed/total` counter are kept per server. Picking a model switches the active server for that conversation, and the conversation remembers it. In **MAX**, you can tick models from different servers; the default run order is *different servers at the same time, one job per server*, so no single server is slowed down.
+
+### Start from the phone without reaching Ollama
+When you are signed in, the first screen (Servers) shows a **💻 Remote PC** card. Choose a PC that is online in host mode, then tap **Continue with <PC>**: the models come from the PC's published catalog, so this device never has to connect to any Ollama server. Saved servers also work through the selected PC.

@@ -8,7 +8,7 @@ import { loadModels, showModels } from './models.js';
 import { enterWorkspace } from './workspace.js';
 import { openSession } from './sessions.js';
 import { openAccount } from './modals.js';
-import { remoteTarget, loadRemoteModels } from './remote.js';
+import { remoteTarget, loadRemoteModels, getRemoteCatalog, openRunOn, remoteSummary, remoteAvail } from './remote.js';
 
 const host = u => { try { return new URL(u).host; } catch { return u; } };
 
@@ -19,7 +19,46 @@ export function initConnect() {
   $('#c-proxy').addEventListener('change', paintProxyBox);
   $('#c-url').addEventListener('input', paintProxyBox);
   paintProxyBox();
-  on('user', paintAccountButton);
+  on('user', () => { paintAccountButton(); paintRemoteCard(); });
+  on('hosts', paintRemoteCard);
+  setInterval(paintRemoteCard, 15000);
+}
+
+/** First-screen card: use a remote PC without reaching any Ollama server from this device. */
+function paintRemoteCard() {
+  const box = $('#c-remote');
+  if (!box) return;
+  box.hidden = !remoteAvail();
+  if (box.hidden) return;
+  const sum = remoteSummary();
+  box.replaceChildren(
+    h('div', { class: 'sec-title' }, '💻 Remote PC'),
+    h('div', { class: 'dim small' }, 'Your phone cannot reach the PC’s Ollama? Let the PC (its browser tab in host mode) do the work. No direct connection to Ollama is needed here.'),
+    sum ? h('div', { class: 'hcard sel' }, h('div', { class: 'hc-main' },
+      h('div', { class: 'hc-top' }, h('span', { class: 'hdot ' + sum.key }), h('b', {}, sum.name), h('span', { class: 'hc-sel' }, '✓ In use')),
+      h('div', { class: 'hc-status ' + sum.key }, sum.label))) : null,
+    h('div', { class: 'row' },
+      sum ? h('button', { class: 'btn primary', id: 'c-pc-go', type: 'button', style: { flex: '1' }, onclick: connectViaPC }, 'Continue with ' + sum.name) : null,
+      h('button', { class: 'btn', type: 'button', style: sum ? {} : { flex: '1' }, onclick: () => openRunOn() }, sum ? 'Change PC' : 'Choose a PC to connect')));
+}
+
+/** Open the models of the selected PC straight from its published catalog (saved server first, else the first one it lists). */
+async function connectViaPC() {
+  const err = $('#c-err');
+  err.hidden = true;
+  try {
+    const cat = await getRemoteCatalog();
+    const servers = cat?.servers || [];
+    if (!servers.length) throw new Error('The PC has not published any server yet. Open the app on the PC, sign in with this account, and switch on "Use this device as a remote host".');
+    let saved = [];
+    try { saved = await state.store.listConnections(); } catch { /* ignore */ }
+    const pick = [...saved].sort((a, b) => (b.lastUsed || 0) - (a.lastUsed || 0)).find(c => servers.some(x => x.id === c.id || x.url === c.url))
+      || { id: servers[0].id, url: servers[0].url, key: '', label: '', created: Date.now(), lastUsed: 0 };
+    await connect(pick, { resume: true });
+  } catch (e) {
+    err.hidden = false;
+    err.textContent = e.message;
+  }
 }
 
 function paintAccountButton() {
@@ -35,6 +74,7 @@ export function openCorsTester(url, key = '', proxy = '') {
 export async function showConnect() {
   show('connect');
   paintAccountButton();
+  paintRemoteCard();
   $('#c-err').hidden = true;
   await paintSaved();
 }

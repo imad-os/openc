@@ -151,6 +151,15 @@ async function answerRemote(id, answer) {
 }
 
 /** The PC's list of all servers and their models (for the merged models view). */
+/** Selected PC for the first screen: { name, key, label } or null. */
+export function remoteSummary() {
+  const t = remoteTarget();
+  if (!t) return null;
+  const x = hosts.find(y => y.id === t);
+  const st = x ? hostState(x) : { key: 'off', label: 'Not found yet…' };
+  return { name: x?.name || 'PC', key: st.key, label: st.label };
+}
+export const remoteAvail = () => R.remoteAvailable();
 export const getRemoteCatalog = () => R.getCatalog(remoteTarget());
 
 /** Models of a server as the PC sees them (the phone cannot reach the PC's localhost). */
@@ -240,7 +249,7 @@ export function paintRunOn() {
 }
 
 /** Full list of machines: live status, platform, select / remove. */
-function openRunOn() {
+export function openRunOn() {
   let off = () => {};
   modal((box, close) => {
     const list = h('div', { class: 'hosts' });
