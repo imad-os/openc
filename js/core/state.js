@@ -26,6 +26,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   jinaKey: '',            // optional Jina key (higher limits, search)
   proxyUrl: '',           // optional CORS proxy, e.g. https://proxy.example.workers.dev/?url={url}
   searxngUrl: '',         // optional SearXNG instance with JSON output enabled
+  hideCloud: false,       // hide Ollama cloud models (names ending in :cloud or -cloud)
   max: { on: false, strategy: 'best', models: [], n: 3, judge: '', planner: '', reviewer: '', parallel: false }, // MAX mode
 });
 
@@ -48,6 +49,9 @@ export const state = {
   abort: null,
 };
 
+/** Models to show in pickers; cloud models can be hidden in Settings. */
+export const isCloudModel = name => /[:-]cloud$/i.test(String(name || ''));
+export const visibleModels = () => (state.settings.hideCloud ? state.models.filter(m => !isCloudModel(m.name)) : state.models);
 export const modelInfo = (name = state.model) => state.models.find(m => m.name === name);
 export const modelCaps = (name = state.model) => modelInfo(name)?.caps || [];
 export const primaryAgents = () => state.agents.filter(a => a.mode === 'primary');

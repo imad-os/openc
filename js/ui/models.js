@@ -1,5 +1,5 @@
 // Models screen: capability tags, strength score, your rating, favorites, measured speed, sorting & filters.
-import { state, emit, on } from '../core/state.js';
+import { state, emit, on, visibleModels } from '../core/state.js';
 import { $, h, toast } from '../util/dom.js';
 import { fmt, tps } from '../util/misc.js';
 import { listModels, showModel } from '../core/ollama.js';
@@ -27,6 +27,7 @@ export function initModels() {
   $('#m-back').addEventListener('click', () => enterWorkspace());
   $('#m-servers').addEventListener('click', showConnect);
   on('model-meta', () => { if (current() === 'models') paintModels(); });
+  on('settings', paintModels);
 }
 
 export async function loadModels() {
@@ -150,7 +151,7 @@ const FILTERS = {
 
 function paintModels() {
   if (current() !== 'models') return;
-  const all = state.models;
+  const all = visibleModels();
   $('#m-count').textContent = `${all.length} model${all.length === 1 ? '' : 's'}`;
 
   const chips = $('#m-chips');

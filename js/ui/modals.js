@@ -1,5 +1,5 @@
 // Dialogs: Settings, Agents editor, Account.
-import { state, emit, saveSettings, DEFAULT_SETTINGS } from '../core/state.js';
+import { state, emit, saveSettings, DEFAULT_SETTINGS, visibleModels } from '../core/state.js';
 import { h, modal, toast, confirmDialog } from '../util/dom.js';
 import { chime, ensureNotifyPermission } from '../util/sound.js';
 import { ALL_TOOLS, BUILTIN_AGENTS, rebuildAgents } from '../agent/agents.js';
@@ -76,6 +76,7 @@ export function openSettings(tab = 'general') {
     const steps = num(s.maxSteps, { min: '1', max: '200' });
     const think = sel(s.think, [['auto', 'Model default'], ['on', 'On'], ['off', 'Off'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High']]);
     const perm = sel(s.perm, [['ask', 'Ask before changes'], ['edits', 'Auto-accept file edits'], ['auto', 'Auto-accept everything']]);
+    const hideCloud = cb(s.hideCloud);
     const autoC = cb(s.autoContinue), autoK = cb(s.autoCompact), sound = cb(s.sound), desk = cb(s.desktopNotify);
     const vol = h('input', { type: 'range', min: '0', max: '1', step: '0.05', value: String(s.volume) });
     const web = cb(s.webEnabled), retry = cb(s.autoRetryStall);
@@ -120,6 +121,7 @@ export function openSettings(tab = 'general') {
       section('Agent'),
       field('Permissions', perm),
       field('Files for new conversations', defFiles),
+      check(hideCloud, 'Hide cloud models (names ending in :cloud or -cloud, e.g. deepseek-v4-pro:cloud)'),
       field('Tool calls', toolMode),
       h('div', { class: 'dim small' }, 'Streamed: tools are described in the prompt and calls are written as text, so you see progress live (e.g. a file being written) and it works with any model. Native: Ollama tool API; tool calls arrive only when complete, so long files mean long silence.'),
       check(autoC, 'Auto-continue when the agent stops with unfinished todos'),
@@ -162,6 +164,7 @@ export function openSettings(tab = 'general') {
                 autoRetryStall: retry.checked,
                 toolMode: toolMode.value,
                 defaultFiles: defFiles.value,
+                hideCloud: hideCloud.checked,
               });
               if (s.desktopNotify && !(await ensureNotifyPermission())) { s.desktopNotify = false; toast('Notifications are blocked in this browser'); }
               saveSettings();
@@ -222,7 +225,7 @@ export function openAgents() {
       const desc = h('input', { value: a.desc || '', placeholder: 'One line (subagent descriptions are shown to the model)' });
       const mode = h('select', {}, ['primary', 'subagent'].map(v => h('option', { value: v, selected: v === a.mode }, v)));
       const model = h('select', {}, [h('option', { value: '' }, '(use the selected model)'),
-        ...state.models.map(m => h('option', { value: m.name, selected: m.name === a.model }, m.name + ((m.caps || []).includes('tools') ? '' : '  [no tools]')))]);
+        ...visibleModels().map(m => h('option', { value: m.name, selected: m.name === a.model }, m.name + ((m.caps || []).includes('tools') ? '' : '  [no tools]')))]);
       const temp = h('input', { type: 'number', step: '0.1', min: '0', max: '2', value: a.temperature ?? '', placeholder: 'default' });
       const checks = ALL_TOOLS.map(n => h('label', {}, h('input', { type: 'checkbox', value: n, checked: (a.tools || []).includes(n) }), n));
       const prompt = h('textarea', { rows: 10, placeholder: 'System prompt: who the agent is, how it works, how it reports.' });

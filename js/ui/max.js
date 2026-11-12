@@ -1,5 +1,5 @@
 // MAX mode button + settings dialog (strategy, models, number of agents, judge / planner / reviewer).
-import { state, on } from '../core/state.js';
+import { state, on, visibleModels } from '../core/state.js';
 import { $, h, modal, toast } from '../util/dom.js';
 import { saveSettings } from '../core/state.js';
 import { maxConfig, clampN, MAX_DEFAULTS } from '../agent/max.js';
@@ -32,7 +32,8 @@ export function toggleMax() {
 function openMax() {
   modal((box, close) => {
     const c = maxConfig();
-    const names = state.models.map(m => m.name);
+    const shown = visibleModels();
+    const names = shown.map(m => m.name);
     const chosen = new Set((c.models || []).filter(m => names.includes(m)));
     let strategy = c.strategy === 'team' ? 'team' : 'best';
 
@@ -71,12 +72,12 @@ function openMax() {
     n.addEventListener('input', paint);
     par.addEventListener('change', paint);
 
-    for (const m of state.models) {
+    for (const m of shown) {
       const cb = h('input', { type: 'checkbox', checked: chosen.has(m.name) });
       cb.addEventListener('change', () => { if (cb.checked) chosen.add(m.name); else chosen.delete(m.name); paint(); });
       rows.append(h('label', { class: 'maxrow' }, cb, h('span', { class: 'ellipsis' }, m.name), h('span', { class: 'dim small' }, (m.caps || []).filter(x => x !== 'completion').join(' · '))));
     }
-    if (!state.models.length) rows.append(h('div', { class: 'dim small' }, 'Connect to a server first to see its models.'));
+    if (!shown.length) rows.append(h('div', { class: 'dim small' }, 'Connect to a server first to see its models.'));
 
     box.append(
       h('h3', {}, 'MAX mode'),

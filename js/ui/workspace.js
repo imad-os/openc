@@ -1,5 +1,5 @@
 // Workspace chrome: top bar (model switcher, permissions), agent pills, status line, sidebar footer.
-import { state, on, primaryAgents, subagents, currentAgent, modelCaps, modelInfo, saveSettings } from '../core/state.js';
+import { state, on, primaryAgents, subagents, currentAgent, modelCaps, modelInfo, saveSettings, visibleModels } from '../core/state.js';
 import { $, h, popover, toast } from '../util/dom.js';
 import { fmt } from '../util/misc.js';
 import { show } from './views.js';
@@ -152,7 +152,7 @@ function openModelPicker(anchor) {
     const paint = () => {
       list.innerHTML = '';
       const term = q.value.toLowerCase();
-      const ms = state.models.filter(m => !term || m.name.toLowerCase().includes(term));
+      const ms = visibleModels().filter(m => !term || m.name.toLowerCase().includes(term));
       const favs = sortModels(ms.filter(m => meta(m.name).fav), 'rating');
       const recent = sortModels(ms.filter(m => !meta(m.name).fav && meta(m.name).lastUsed), 'recent').slice(0, 5);
       const shown = new Set([...favs, ...recent]);
