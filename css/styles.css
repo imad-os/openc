@@ -419,3 +419,11 @@ pre.cmd { margin: 0; background: var(--code-bg); border: 1px solid var(--line); 
 .hc-sel { margin-left: auto; color: var(--ac); font-size: 0.8rem; white-space: nowrap }
 .hc-status { font-size: 0.82rem; font-weight: 600 }
 .hc-status.ready { color: var(--ok) } .hc-status.busy { color: var(--warn) } .hc-status.off { color: var(--dim) }
+
+/* MAX mode */
+.maxbtn { flex: none; font-weight: 700; letter-spacing: 0.04em }
+.maxbtn.on { background: var(--ac); color: #fff; border-color: var(--ac) }
+.maxmodels { display: flex; flex-direction: column; max-height: 220px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; margin: 6px 0 }
+.maxrow { display: flex; align-items: center; gap: 8px; padding: 6px 10px; cursor: pointer }
+.maxrow span.ellipsis { flex: 1; min-width: 0 }
+.maxroles { display: flex; flex-direction: column; gap: 4px; margin-top: 6px }

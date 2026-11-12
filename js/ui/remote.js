@@ -12,6 +12,7 @@ import { threadView, renderThread } from './chat.js';
 import { runs, describe, setRemoteBar } from './runs.js';
 import { persistSession, paintSessions, renderTodos } from './sessions.js';
 import { runTurn } from './composer.js';
+import { maxConfig } from '../agent/max.js';
 
 /* =====================================================================
  *  Phone side
@@ -126,7 +127,8 @@ export async function sendRemote(text, hostId) {
   s._optimistic = text;
   await persistSession(s); // creates the conversation document the PC loads
   try {
-    await R.sendCommand({ host: hostId, type: 'send', session: s.id, text, conn: state.conn.id, model: state.model, agent: agent.id });
+    const mx = maxConfig();
+    await R.sendCommand({ host: hostId, type: 'send', session: s.id, text, conn: state.conn.id, model: state.model, agent: agent.id, ...(mx.on ? { max: JSON.stringify(mx).slice(0, 3900) } : {}) });
     toast(`✓ Sent to ${host.name}${R.isOnline(host) ? '' : ' (queued)'}. You can close this page.`, 4500);
   } catch (e) {
     s._optimistic = '';
@@ -410,9 +412,11 @@ async function hostSend(h0, cmd) {
   s.messages.push(um);
   view.user(um);
   const pub = makePublisher(h0, s);
+  let max = null;
+  try { const mx = cmd.max ? JSON.parse(cmd.max) : null; if (mx?.on) max = mx; } catch { /* ignore */ }
   let out;
   try {
-    out = await runTurn(s, { agent, conn, model, models, remote: { ask: pub.ask }, onRun: pub.start });
+    out = await runTurn(s, { agent, conn, model, models, max, remote: { ask: pub.ask }, onRun: pub.start });
   } catch (e) { out = { error: e }; }
   pub.finish(out);
 }

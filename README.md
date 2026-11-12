@@ -136,3 +136,12 @@ A browser tab on your PC can act as a **host**. From your phone you pick *Run on
 3. On the phone: sign in with the same account, tap **▶ This device** → choose the PC. Connect/add a server as usual (the model list comes from the PC), then chat.
 
 How it works: the phone writes a command document; the host tab runs the normal agent loop and saves messages to Firestore as it goes; the phone listens to those documents live. Approvals and questions are shown on both screens, whoever answers first wins. Files the agent creates stay in the PC's browser. Images are not sent to remote PCs.
+
+## MAX mode (several agents / models for a better result)
+
+Tap **MAX** in the top bar (or type `/max` to switch it on and off) to choose how many agents work on each request and which models they use.
+
+- **Best of N + judge**: N agents each solve the whole task in their own temporary workspace. A judge model scores them, and the winner's files are copied into your workspace.
+- **Team**: a planner splits the task, workers (taking turns over the chosen models) build the parts in your workspace, and a reviewer checks the result and fixes problems.
+
+Every attempt, worker and reviewer appears as a collapsible card in the conversation. Attempts run one after another by default (one GPU runs one model at a time); choose "At the same time" if your server can handle it. MAX also works with the remote PC: the setting travels with the message.

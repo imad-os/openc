@@ -17,6 +17,7 @@ import { initChat } from './ui/chat.js';
 import { applyDisplay } from './ui/display.js';
 import { initRuns, abortAll } from './ui/runs.js';
 import { initRemote } from './ui/remote.js';
+import { initMax } from './ui/max.js';
 
 async function loadUserData() {
   let settings = {};
@@ -81,6 +82,7 @@ async function boot() {
   initFiles();
   initSessions();
   initRemote();
+  initMax();
 
   if (!getFirebaseConfig()) return startLocal();
   showAuth({ loading: true });

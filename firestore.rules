@@ -78,11 +78,11 @@ service cloud.firestore {
     }
 
     function validCommand() {
-      return onlyKeys(['host', 'type', 'session', 'text', 'conn', 'model', 'agent', 'status', 'error', 'created', 'pending', 'answer'])
+      return onlyKeys(['host', 'type', 'session', 'text', 'conn', 'model', 'agent', 'status', 'error', 'created', 'pending', 'answer', 'max'])
         && hasKeys(['host', 'type', 'status']) && isStr(data().host, 1, 100)
         && data().type in ['send', 'stop', 'answer', 'refresh'] && data().status in ['pending', 'taken', 'done', 'error']
         && optStr('session', 100) && optStr('text', 100000) && optStr('conn', 100) && optStr('model', 300)
-        && optStr('agent', 64) && optStr('error', 2000) && optStr('pending', 100) && optStr('answer', 20000)
+        && optStr('agent', 64) && optStr('max', 4000) && optStr('error', 2000) && optStr('pending', 100) && optStr('answer', 20000)
         && optTime('created');
     }
 

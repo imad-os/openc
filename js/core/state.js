@@ -26,6 +26,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   jinaKey: '',            // optional Jina key (higher limits, search)
   proxyUrl: '',           // optional CORS proxy, e.g. https://proxy.example.workers.dev/?url={url}
   searxngUrl: '',         // optional SearXNG instance with JSON output enabled
+  max: { on: false, strategy: 'best', models: [], n: 3, judge: '', planner: '', reviewer: '', parallel: false }, // MAX mode
 });
 
 export const state = {

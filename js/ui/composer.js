@@ -12,6 +12,8 @@ import { recordModelStats, showModels } from './models.js';
 import { cycleAgent, setAgent } from './workspace.js';
 import { openAgents, openSettings } from './modals.js';
 import { remoteTarget, remoteRunning, sendRemote, stopRemote } from './remote.js';
+import { runMax, maxConfig } from '../agent/max.js';
+import { toggleMax } from './max.js';
 
 const pending = []; // base64 images
 
@@ -80,13 +82,14 @@ function command(text) {
     case 'new': case 'clear': return newSession();
     case 'model': case 'models': return showModels();
     case 'agents': return openAgents();
+    case 'max': return toggleMax();
     case 'settings': return openSettings();
     case 'display': return openSettings('display');
     case 'agent': {
       const a = primaryAgents().find(x => x.name === arg);
       return a ? setAgent(a.id) : toast('Agents: ' + primaryAgents().map(x => x.name).join(', '));
     }
-    default: toast('Commands: /new  /model  /agent <name>  /agents  /settings  /display');
+    default: toast('Commands: /new  /model  /agent <name>  /agents  /max  /settings  /display');
   }
 }
 
@@ -131,7 +134,8 @@ export async function send() {
   $('#title').textContent = s.title;
   inp.value = '';
   autosize();
-  return runTurn(s, { agent, conn: state.conn, model: state.model, models: state.models });
+  const max = maxConfig();
+  return runTurn(s, { agent, conn: state.conn, model: state.model, models: state.models, max: max.on ? max : null });
 }
 
 /**
@@ -140,7 +144,7 @@ export async function send() {
  * opts.remote: { ask({kind,text,options}) → {promise, cancel} } lets another device answer approvals/questions.
  * Resolves { error, stopped, result }.
  */
-export async function runTurn(s, { agent, conn, model, models, remote = null, onRun = null }) {
+export async function runTurn(s, { agent, conn, model, models, remote = null, onRun = null, max = null }) {
   const view = threadView(s);
   const run = createRun({ conn, model, models, fs: fsFor(s) });
   const controller = new AbortController();
@@ -189,7 +193,9 @@ export async function runTurn(s, { agent, conn, model, models, remote = null, on
 
   let result = null, error = null, stopped = false;
   try {
-    result = await runAgent({ agent, thread: s, view, signal, run, hooks });
+    result = max
+      ? await runMax({ cfg: max, agent, thread: s, view, signal, run, hooks })
+      : await runAgent({ agent, thread: s, view, signal, run, hooks });
   } catch (e) {
     if (e.name === 'AbortError') stopped = true; else error = e;
   }

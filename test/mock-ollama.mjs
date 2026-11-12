@@ -26,6 +26,11 @@ function normalize(msgs) {
 }
 
 function script(body) {
+  if (body.format === 'json') { // MAX mode helpers: judge and planner
+    const sys = body.messages[0]?.content || '';
+    if (/impartial judge/.test(sys)) return { content: JSON.stringify({ scores: [{ attempt: 1, score: 6, notes: 'ok' }, { attempt: 2, score: 9, notes: 'most complete' }], winner: 2, reason: 'Attempt 2 is the most complete.' }) };
+    if (/technical lead/.test(sys)) return { content: JSON.stringify({ summary: 'Split into a page and notes.', tasks: [{ title: 'Page', instructions: 'Create index.html' }, { title: 'Notes', instructions: 'Write notes.txt' }] }) };
+  }
   const msgs = normalize(body.messages);
   const hasTools = !!body.tools || /# How to use tools/.test(body.messages[0]?.content || '');
   const last = msgs[msgs.length - 1];

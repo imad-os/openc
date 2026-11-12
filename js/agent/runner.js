@@ -40,7 +40,7 @@ const resolveModel = (agent, run) => (agent.model && run.models.some(m => m.name
 const agentTools = (agent, depth) => (agent.tools || []).filter(n => TOOLS[n]
   && !(n === 'task' && (depth > 0 || !subagents().length))
   && !(TOOLS[n].web && !state.settings.webEnabled));
-const autoApproved = perm => state.settings.perm === 'auto' || (state.settings.perm === 'edits' && perm === 'edit');
+const autoApproved = (perm, run) => { const mode = run?.perm || state.settings.perm; return mode === 'auto' || (mode === 'edits' && perm === 'edit'); };
 
 const fileCache = new WeakMap(); // fs -> { t, list }
 async function workspaceFiles(fs) {
@@ -332,7 +332,7 @@ async function executeOne(call, card, c) {
     return fail(`Error: you already called ${name} with these exact arguments ${repeats} times and the result will not change. Try a different approach, or stop and report to the user.`);
   }
 
-  if (def.perm && !autoApproved(def.perm)) {
+  if (def.perm && !autoApproved(def.perm, c.run)) {
     card.status('pending');
     setPhase(c.run, 'approval', `${c.prefix}${name} ${toolTitle(name, args)}`, { card });
     const ok = c.hooks.confirm ? await c.hooks.confirm(card, def) : true;
