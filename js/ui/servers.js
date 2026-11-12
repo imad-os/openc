@@ -86,3 +86,12 @@ export function initServers() {
   on('conn', adoptActive);
   on('user', () => { state.servers = []; });
 }
+
+/** Resolver for MAX: id -> { conn, models, label } of a saved server (loads it when needed). */
+export async function getServer(id) {
+  if (!state.servers.length) await loadServers();
+  let s = state.servers.find(x => x.conn.id === id);
+  if (s && s.status !== 'ok') { await refreshOne(s, true); }
+  if (!s || s.status !== 'ok' || !s.models.length) return null;
+  return { conn: s.conn, models: s.models, label: serverLabel(s.conn) };
+}

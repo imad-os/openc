@@ -153,3 +153,6 @@ The address bar follows where you are: `#/connect` (servers), `#/models`, `#/cha
 ## Model reliability
 
 Each model card (and the model switcher) shows `failed/total`, for example **7**/10: the red number is how many model requests failed (connection cut / EOF, out of memory, stalls, server errors) and the white number is all requests. Hover it to see the last error. Stats are stored with the model's other stats.
+
+## Several servers at once
+With two or more saved servers the **Models** screen and the model switcher show every server's models in one list. Each model carries its server name as a tag, and chips at the top filter by server (green/red dot = reachable or not). Ratings, favourites and the `failed/total` counter are kept per server. Picking a model switches the active server for that conversation, and the conversation remembers it. In **MAX**, you can tick models from different servers; the default run order is *different servers at the same time, one job per server*, so no single server is slowed down.

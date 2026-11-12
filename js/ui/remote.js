@@ -419,7 +419,11 @@ async function hostSend(h0, cmd) {
   try { const mx = cmd.max ? JSON.parse(cmd.max) : null; if (mx?.on) max = mx; } catch { /* ignore */ }
   let out;
   try {
-    out = await runTurn(s, { agent, conn, model, models, max, remote: { ask: pub.ask }, onRun: pub.start });
+    const servers = async id => {
+      const c = (await st.listConnections()).find(x => x.id === id);
+      return c ? { conn: c, models: await modelsFor(c), label: c.label || new URL(c.url).host } : null;
+    };
+    out = await runTurn(s, { agent, conn, model, models, max, servers, remote: { ask: pub.ask }, onRun: pub.start });
   } catch (e) { out = { error: e }; }
   pub.finish(out);
 }

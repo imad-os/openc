@@ -13,6 +13,7 @@ import { cycleAgent, setAgent } from './workspace.js';
 import { openAgents, openSettings } from './modals.js';
 import { remoteTarget, remoteRunning, sendRemote, stopRemote } from './remote.js';
 import { runMax, maxConfig } from '../agent/max.js';
+import { getServer } from './servers.js';
 import { toggleMax } from './max.js';
 
 const pending = []; // base64 images
@@ -144,7 +145,7 @@ export async function send() {
  * opts.remote: { ask({kind,text,options}) → {promise, cancel} } lets another device answer approvals/questions.
  * Resolves { error, stopped, result }.
  */
-export async function runTurn(s, { agent, conn, model, models, remote = null, onRun = null, max = null }) {
+export async function runTurn(s, { agent, conn, model, models, remote = null, onRun = null, max = null, servers = getServer }) {
   const view = threadView(s);
   const run = createRun({ conn, model, models, fs: fsFor(s) });
   const controller = new AbortController();
@@ -194,7 +195,7 @@ export async function runTurn(s, { agent, conn, model, models, remote = null, on
   let result = null, error = null, stopped = false;
   try {
     result = max
-      ? await runMax({ cfg: max, agent, thread: s, view, signal, run, hooks })
+      ? await runMax({ cfg: max, agent, thread: s, view, signal, run, hooks, servers })
       : await runAgent({ agent, thread: s, view, signal, run, hooks });
   } catch (e) {
     if (e.name === 'AbortError') stopped = true; else error = e;
