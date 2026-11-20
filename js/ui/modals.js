@@ -121,7 +121,7 @@ export function openSettings(tab = 'general') {
       section('Agent'),
       field('Permissions', perm),
       field('Files for new conversations', defFiles),
-      check(hideCloud, 'Hide cloud models (names ending in :cloud or -cloud, e.g. deepseek-v4-pro:cloud)'),
+      check(hideCloud, 'Hide cloud models (names containing :cloud or -cloud, e.g. deepseek-v4-pro:cloud)'),
       field('Tool calls', toolMode),
       h('div', { class: 'dim small' }, 'Streamed: tools are described in the prompt and calls are written as text, so you see progress live (e.g. a file being written) and it works with any model. Native: Ollama tool API; tool calls arrive only when complete, so long files mean long silence.'),
       check(autoC, 'Auto-continue when the agent stops with unfinished todos'),

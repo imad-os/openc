@@ -1,9 +1,9 @@
 // Workspace chrome: top bar (model switcher, permissions), agent pills, status line, sidebar footer.
-import { state, on, primaryAgents, subagents, currentAgent, modelCaps, modelInfo, saveSettings, visibleModels } from '../core/state.js';
+import { state, on, primaryAgents, subagents, currentAgent, modelCaps, modelInfo, saveSettings, visibleModels, isCloudModel } from '../core/state.js';
 import { $, h, popover, toast } from '../util/dom.js';
 import { fmt } from '../util/misc.js';
 import { show } from './views.js';
-import { showModels, pickModel, starsEl, capTag, meta, statsText, strengthEl, sortModels, reliabilityEl, pickerItems } from './models.js';
+import { showModels, pickModel, starsEl, capTag, meta, statsText, strengthEl, sortModels, reliabilityEl, pickerItems, isMerged } from './models.js';
 import { serverLabel } from './servers.js';
 import { paintSessions, renderSession, draftSession, newSession } from './sessions.js';
 import { refreshFiles } from './files.js';
@@ -145,6 +145,15 @@ function openModelPicker(anchor) {
   popover(anchor, (el, close) => {
     const q = h('input', { placeholder: 'Search models…' });
     const list = h('div', { class: 'pop-list' });
+    const allNames = (isMerged() ? state.servers.flatMap(x => (x.status === 'ok' ? x.models : [])) : state.models).map(m => m.name);
+    const cloudN = allNames.filter(isCloudModel).length;
+    const cloudBtn = h('button', { class: 'chip', type: 'button', title: 'Hide models with :cloud in their name (also in Settings)', onclick: () => {
+      state.settings.hideCloud = !state.settings.hideCloud;
+      saveSettings();
+      cloudBtn.classList.toggle('on', state.settings.hideCloud);
+      paint();
+    } }, `☁ Hide :cloud · ${cloudN}`);
+    cloudBtn.classList.toggle('on', !!state.settings.hideCloud);
     const row = m => h('div', {
       class: 'pop-row' + (m.name === state.model && (!m._srv || m._srv.conn.id === state.conn?.id) ? ' on' : ''),
       onclick: () => { close(); pickModel(m.name, { stay: true, srv: m._srv || null }); },
@@ -166,7 +175,7 @@ function openModelPicker(anchor) {
       if (!ms.length) list.append(h('div', { class: 'dim pad' }, 'No models match.'));
     };
     q.addEventListener('input', paint);
-    el.append(q, list, h('button', { class: 'btn sm ghost wide', type: 'button', onclick: () => { close(); showModels(); } }, 'All models, ratings and stats →'));
+    el.append(q, ...(cloudN || state.settings.hideCloud ? [cloudBtn] : []), list, h('button', { class: 'btn sm ghost wide', type: 'button', onclick: () => { close(); showModels(); } }, 'All models, ratings and stats →'));
     paint();
     setTimeout(() => q.focus());
   });
