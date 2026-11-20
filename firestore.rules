@@ -46,12 +46,15 @@ service cloud.firestore {
 
     function validModelMeta() {
       return onlyKeys(['url', 'model', 'rating', 'fav', 'note', 'lastUsed', 'updated',
-                       'runs', 'requests', 'evalTokens', 'evalNs', 'promptTokens', 'toolCalls', 'toolErrors', 'fails', 'lastFail'])
+                       'runs', 'requests', 'evalTokens', 'evalNs', 'promptTokens', 'toolCalls', 'toolErrors', 'fails', 'lastFail',
+                       'benchAt', 'benchN', 'benchOk', 'benchMs', 'benchTtft', 'benchTps', 'benchErr'])
         && hasKeys(['url', 'model']) && isUrl(data().url) && isStr(data().model, 1, 300)
         && optNum('rating', 0, 5) && optBool('fav') && optStr('note', 2000)
         && optTime('lastUsed') && optTime('updated')
         && optCount('runs') && optCount('requests') && optCount('evalTokens') && optCount('evalNs')
-        && optCount('promptTokens') && optCount('toolCalls') && optCount('toolErrors') && optCount('fails') && optStr('lastFail', 300);
+        && optCount('promptTokens') && optCount('toolCalls') && optCount('toolErrors') && optCount('fails') && optStr('lastFail', 300)
+        && optTime('benchAt') && optCount('benchN') && optCount('benchOk') && optCount('benchMs') && optCount('benchTtft')
+        && optNum('benchTps', 0, 1000000) && optStr('benchErr', 300);
     }
 
     function validAgent() {
@@ -80,7 +83,7 @@ service cloud.firestore {
     function validCommand() {
       return onlyKeys(['host', 'type', 'session', 'text', 'conn', 'model', 'agent', 'status', 'error', 'created', 'pending', 'answer', 'max'])
         && hasKeys(['host', 'type', 'status']) && isStr(data().host, 1, 100)
-        && data().type in ['send', 'stop', 'answer', 'refresh'] && data().status in ['pending', 'taken', 'done', 'error']
+        && data().type in ['send', 'stop', 'answer', 'refresh', 'bench'] && data().status in ['pending', 'taken', 'done', 'error']
         && optStr('session', 100) && optStr('text', 100000) && optStr('conn', 100) && optStr('model', 300)
         && optStr('agent', 64) && optStr('max', 4000) && optStr('error', 2000) && optStr('pending', 100) && optStr('answer', 20000)
         && optTime('created');

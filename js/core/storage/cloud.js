@@ -34,7 +34,7 @@ export async function loadFirebase(config) {
 }
 
 export const CONN_FIELDS = ['url', 'key', 'label', 'created', 'lastUsed', 'lastModel', 'proxy', 'proxyUrl'];
-export const MODEL_FIELDS = ['url', 'model', 'rating', 'fav', 'note', 'lastUsed', 'updated', 'runs', 'requests', 'evalTokens', 'evalNs', 'promptTokens', 'toolCalls', 'toolErrors', 'fails', 'lastFail'];
+export const MODEL_FIELDS = ['url', 'model', 'rating', 'fav', 'note', 'lastUsed', 'updated', 'runs', 'requests', 'evalTokens', 'evalNs', 'promptTokens', 'toolCalls', 'toolErrors', 'fails', 'lastFail', 'benchAt', 'benchN', 'benchOk', 'benchMs', 'benchTtft', 'benchTps', 'benchErr'];
 export const AGENT_FIELDS = ['name', 'mode', 'desc', 'model', 'temperature', 'tools', 'prompt', 'updated'];
 export const SESSION_FIELDS = ['title', 'created', 'updated', 'url', 'model', 'agent', 'todos', 'summary', 'summaryUpto', 'count', 'files'];
 

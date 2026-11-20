@@ -1,5 +1,5 @@
 // Models screen: capability tags, strength score, your rating, favorites, measured speed, sorting & filters.
-import { state, emit, on, visibleModels, visibleOf } from '../core/state.js';
+import { state, emit, on, visibleModels, visibleOf, isCloudModel, saveSettings } from '../core/state.js';
 import { loadServers, serverLabel, adoptActive } from './servers.js';
 import { $, h, toast } from '../util/dom.js';
 import { fmt, tps } from '../util/misc.js';
@@ -9,6 +9,7 @@ import { show, current } from './views.js';
 import { enterWorkspace, updateTop } from './workspace.js';
 import { persistConn, showConnect } from './connect.js';
 import { remoteTarget, loadRemoteModels } from './remote.js';
+import { openBench, benchLabel } from './bench.js';
 
 const CAP_COLORS = { completion: '#8b98a8', vision: '#b794f6', tools: '#4ade80', thinking: '#fbbf24', audio: '#f472b6', embedding: '#2dd4bf', insert: '#8b98a8' };
 const COUNTERS = ['runs', 'requests', 'evalTokens', 'evalNs', 'promptTokens', 'toolCalls', 'toolErrors', 'fails'];
@@ -41,6 +42,8 @@ export function initModels() {
       toast('Models refreshed');
     } catch (e) { toast(e.message); }
   });
+  $('#m-bench').addEventListener('click', openBenchDialog);
+  on('bench', () => { $('#m-bench').textContent = benchLabel(); });
   $('#m-back').addEventListener('click', () => enterWorkspace());
   $('#m-servers').addEventListener('click', showConnect);
   on('model-meta', () => { if (current() === 'models') paintModels(); });
@@ -171,12 +174,22 @@ const SORTS = {
   recent: (a, b) => (meta(b.name, b._srv).lastUsed || 0) - (meta(a.name, a._srv).lastUsed || 0),
   newest: (a, b) => new Date(b.modified_at || 0) - new Date(a.modified_at || 0),
   name: (a, b) => a.name.localeCompare(b.name),
+  bench: (a, b) => benchRank(a) - benchRank(b),
   size: (a, b) => (a.size || 0) - (b.size || 0),
   sizedesc: (a, b) => (b.size || 0) - (a.size || 0),
 };
 export const sortModels = (list, mode) => [...list].sort(SORTS[mode] || SORTS.smart);
 
+/** Fastest successful benchmark first; failed ones next; never benchmarked last. */
+const benchOf = m => meta(m.name, m._srv);
+const benchRank = m => { const b = benchOf(m); return !b.benchAt ? 1e12 : b.benchOk ? b.benchMs + (b.benchN - b.benchOk) * 1e6 : 1e9; };
+const benchPassed = m => { const b = benchOf(m); return !!b.benchAt && b.benchOk === b.benchN; };
+const benchBad = m => { const b = benchOf(m); return !!b.benchAt && b.benchOk < b.benchN; };
+
 const FILTERS = {
+  benchok: { label: '⏱ Bench passed', test: benchPassed },
+  benchbad: { label: '⏱ Bench failed', test: benchBad },
+  nobench: { label: '⏱ Not benchmarked', test: m => !benchOf(m).benchAt },
   fav: { label: '♥ Favorites', test: m => !!meta(m.name, m._srv).fav },
   rated: { label: '★ Rated', test: m => !!meta(m.name, m._srv).rating },
   used: { label: 'Used before', test: m => !!meta(m.name, m._srv).runs },
@@ -203,6 +216,14 @@ function paintModels() {
       const n = pool.filter(m => m._srv === srv).length;
       chips.append(sc(srv.conn.id, serverLabel(srv.conn), srv.status === 'loading' ? '…' : srv.status === 'error' ? '✕' : n, srv));
     }
+  }
+  const rawPool = merged ? state.servers.flatMap(srv => (srv.status === 'ok' ? srv.models : [])) : state.models;
+  const cloudN = rawPool.filter(m => isCloudModel(m.name)).length;
+  if (cloudN || state.settings.hideCloud) {
+    chips.append(h('button', {
+      class: 'chip' + (state.settings.hideCloud ? ' on' : ''), type: 'button', title: 'Hide models with :cloud in their name (also in Settings)',
+      onclick: () => { state.settings.hideCloud = !state.settings.hideCloud; saveSettings(); },
+    }, `☁ Hide :cloud · ${cloudN}`));
   }
   const chip = (key, label, count) => h('button', {
     class: 'chip' + (view.filters.has(key) ? ' on' : ''), type: 'button',
@@ -233,8 +254,32 @@ function paintModels() {
       h('div', { class: 'meta' }, [d.parameter_size, d.quantization_level, m.size ? fmt.gb(m.size) : null, d.context_length ? fmt.ctx(d.context_length) + ' ctx' : null, d.family]
         .filter(Boolean).map(x => h('span', {}, x))),
       h('div', { class: 'mfoot' }, strengthEl(m.name, { srv }), starsEl(m.name, { srv }), reliabilityEl(m.name, srv), running ? h('span', { class: 'run', title: 'Loaded in memory' }, '● loaded') : null),
+      benchEl(m),
       stats ? h('div', { class: 'dim small' }, stats) : null));
   }
+}
+
+/** "⏱ 3/3 · 4.2s · first token 0.8s · 31 tok/s" or why it failed. */
+function benchEl(m) {
+  const b = benchOf(m);
+  if (!b.benchAt) return null;
+  const good = b.benchOk === b.benchN;
+  const parts = [`${b.benchOk}/${b.benchN} answered`];
+  if (b.benchOk) parts.push(fmt.dur(b.benchMs) + ' avg', 'first token ' + fmt.dur(b.benchTtft));
+  if (b.benchTps) parts.push(b.benchTps.toFixed(1) + ' tok/s');
+  return h('div', { class: 'benchline ' + (good ? 'ok' : b.benchOk ? 'part' : 'bad'), title: (b.benchErr ? 'Last problem: ' + b.benchErr + '\n' : '') + 'Benchmarked ' + fmt.ago(b.benchAt) },
+    h('b', {}, good ? '⏱ ✓' : b.benchOk ? '⏱ ◐' : '⏱ ✗'), ' ' + parts.join(' · '), !good && b.benchErr ? h('span', { class: 'dim' }, ' · ' + b.benchErr) : null);
+}
+
+function openBenchDialog() {
+  const merged = isMerged();
+  const pool = merged ? pickerItems() : visibleModels();
+  const all = merged && view.server ? pool.filter(m => m._srv.conn.id === view.server) : pool;
+  const q = view.q.toLowerCase();
+  const shown = sortModels(all.filter(m =>
+    (!q || m.name.toLowerCase().includes(q) || JSON.stringify(m.details || {}).toLowerCase().includes(q)) &&
+    [...view.filters].every(f => (f.startsWith('cap:') ? (m.caps || []).includes(f.slice(4)) : FILTERS[f].test(m)))), view.sort);
+  openBench({ shown, pool });
 }
 
 /** Select a model. stay=true when switching from inside the workspace. */

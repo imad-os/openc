@@ -439,3 +439,11 @@ pre.cmd { margin: 0; background: var(--code-bg); border: 1px solid var(--line); 
 .srvchip{display:inline-flex;align-items:center;gap:6px}
 .sdot{width:8px;height:8px;border-radius:50%;background:#888;display:inline-block}
 .sdot.ok{background:#3fb950}.sdot.error{background:#f85149}.sdot.loading{background:#d29922}
+
+/* model benchmark */
+.benchline { font-size: 0.82rem; font-variant-numeric: tabular-nums }
+.benchline.ok b { color: #4ade80 } .benchline.part b { color: #fbbf24 } .benchline.bad b { color: #ef4444 }
+.bench-form { display: flex; flex-direction: column; gap: 6px }
+.bench-form .row { align-items: center }
+.bench-status { font-size: 0.9rem }
+.bench-log { margin: 0; max-height: 220px; overflow: auto; font-size: 0.82rem; white-space: pre-wrap; background: var(--p2); border-radius: 8px; padding: 8px }

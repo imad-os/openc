@@ -159,3 +159,17 @@ With two or more saved servers the **Models** screen and the model switcher show
 
 ### Start from the phone without reaching Ollama
 When you are signed in, the first screen (Servers) shows a **💻 Remote PC** card. Choose a PC that is online in host mode, then tap **Continue with <PC>**: the models come from the PC's published catalog, so this device never has to connect to any Ollama server. Saved servers also work through the selected PC.
+
+
+## Hide :cloud models
+The Models screen has a **☁ Hide :cloud** chip in its filters. It hides every model whose name contains `:cloud` or `-cloud` (for example `deepseek-v4-pro:cloud`). It is the same switch as **Settings → Hide cloud models**.
+
+## Benchmark all models
+Press **⏱ Benchmark** on the Models screen. Every chosen model gets the same question (default: *17 × 23*, the answer must contain `391`) several times (default 3, up to 5) and you set how long to wait for each try. The app saves, per model: how many tries answered, the average total time, the time to the first token and tokens/s. Models that fail their first two tries are not retried a third time, and embedding models are skipped.
+
+- Choose **models shown now** (respects your search and filters), **not benchmarked yet** or **all models**.
+- Servers run side by side; one server runs one model at a time.
+- The result is shown on each model card (⏱ ✓ / ◐ / ✗) and in the filters **Bench passed**, **Bench failed** and **Not benchmarked**. Sort with **Benchmark: fastest first**.
+- With a remote PC selected, the PC runs the benchmark and you can close the phone. Results are saved to your account.
+
+After updating, deploy the rules again (the model stats gained `bench*` fields and the host accepts a `bench` command): `firebase deploy --only firestore:rules`.

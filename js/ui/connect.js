@@ -21,6 +21,7 @@ export function initConnect() {
   paintProxyBox();
   on('user', () => { paintAccountButton(); paintRemoteCard(); });
   on('hosts', paintRemoteCard);
+  on('target', paintRemoteCard);
   setInterval(paintRemoteCard, 15000);
 }
 
@@ -39,7 +40,7 @@ function paintRemoteCard() {
       h('div', { class: 'hc-status ' + sum.key }, sum.label))) : null,
     h('div', { class: 'row' },
       sum ? h('button', { class: 'btn primary', id: 'c-pc-go', type: 'button', style: { flex: '1' }, onclick: connectViaPC }, 'Continue with ' + sum.name) : null,
-      h('button', { class: 'btn', type: 'button', style: sum ? {} : { flex: '1' }, onclick: () => openRunOn() }, sum ? 'Change PC' : 'Choose a PC to connect')));
+      h('button', { class: 'btn', type: 'button', style: sum ? {} : { flex: '1' }, onclick: () => openRunOn({ onPick: id => { if (id) connectViaPC(); } }) }, sum ? 'Change PC' : 'Choose a PC to connect')));
 }
 
 /** Open the models of the selected PC straight from its published catalog (saved server first, else the first one it lists). */

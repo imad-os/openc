@@ -13,6 +13,7 @@ import { runs, describe, setRemoteBar } from './runs.js';
 import { persistSession, paintSessions, renderTodos } from './sessions.js';
 import { runTurn } from './composer.js';
 import { maxConfig } from '../agent/max.js';
+import { runBench, benchable } from '../agent/bench.js';
 
 /* =====================================================================
  *  Phone side
@@ -33,12 +34,13 @@ const fresh = l => !!l && Date.now() - (l.updated || 0) < 90000;
 /** The visible conversation is running on the PC right now. */
 export const remoteRunning = () => !!remoteTarget() && live?.state === 'running' && fresh(live);
 
-function setTarget(id) {
+function setTarget(id, { quiet = false } = {}) {
   target = id || '';
   try { if (target) localStorage.setItem(TARGET_KEY, target); else localStorage.removeItem(TARGET_KEY); } catch { /* ignore */ }
   attach();
   paintRunOn();
-  toast(target ? `Agents now run on ${hostName(target)}` : 'Agents run on this device');
+  emit('target', target);
+  if (!quiet) toast(target ? `Agents now run on ${hostName(target)}` : 'Agents run on this device');
 }
 const hostName = id => hosts.find(x => x.id === id)?.name || 'the PC';
 
@@ -166,19 +168,23 @@ export const getRemoteCatalog = () => R.getCatalog(remoteTarget());
 export async function loadRemoteModels(conn, { wait = false } = {}) {
   const host = remoteTarget();
   const t0 = Date.now();
+  let before = 0; // the PC's own timestamp of the catalog we start from: a change means it refreshed (clocks of phone and PC may differ)
   if (wait) {
+    try { before = (await R.getCatalog(host))?.updated || 0; } catch { /* ignore */ }
     try { await R.sendCommand({ host, type: 'refresh', conn: conn.id }); } catch (e) { throw new Error('Could not ask the PC: ' + e.message); }
   }
   for (;;) {
     const cat = await R.getCatalog(host);
     const srv = cat?.servers?.find(x => x.id === conn.id || x.url === conn.url);
-    if (srv && (!wait || (cat.updated || 0) >= t0 - 2000)) {
+    const stale = !!srv && wait && Date.now() - t0 > 30000 && !srv.error; // PC slow or asleep: use what it published last
+    if (srv && (!wait || (cat.updated || 0) !== before || stale)) {
+      if (stale) toast(`${hostName(host)} did not answer: showing the model list it published earlier`, 5000);
       if (srv.error) throw new Error(`${hostName(host)} cannot reach ${srv.url}: ${srv.error}`);
       state.running = {};
       state.models = (srv.models || []).map(m => ({ ...m }));
       return;
     }
-    if (!wait || Date.now() - t0 > 25000) {
+    if (!wait || Date.now() - t0 > 40000) {
       throw new Error(srv ? 'The PC did not answer in time.' : `${hostName(host)} has not listed this server yet. Is its browser open in host mode?`);
     }
     await new Promise(r => setTimeout(r, 1500));
@@ -249,7 +255,7 @@ export function paintRunOn() {
 }
 
 /** Full list of machines: live status, platform, select / remove. */
-export function openRunOn() {
+export function openRunOn({ onPick } = {}) {
   let off = () => {};
   modal((box, close) => {
     const list = h('div', { class: 'hosts' });
@@ -264,12 +270,12 @@ export function openRunOn() {
           status ? h('div', { class: 'hc-status ' + key }, status) : null),
         onRemove ? h('button', { class: 'btn sm ghost danger', type: 'button', title: 'Forget this machine', onclick: onRemove }, '×') : null);
       list.replaceChildren(
-        card({ key: 'local', title: '▶ This device', sub: `${R.platformInfo().text} · agents run in this browser and stop when you close it`, selected: !t, onPick: () => { close(); setTarget(''); } }),
+        card({ key: 'local', title: '▶ This device', sub: `${R.platformInfo().text} · agents run in this browser and stop when you close it`, selected: !t, onPick: () => { close(); setTarget('', { quiet: !!onPick }); onPick?.(''); } }),
         ...others.map(x => {
           const st = hostState(x);
           return card({
             key: st.key, title: x.name, sub: x.platform || 'Unknown platform', status: st.label, selected: t === x.id,
-            onPick: () => { close(); setTarget(x.id); },
+            onPick: () => { close(); setTarget(x.id, { quiet: !!onPick }); onPick?.(x.id); },
             onRemove: st.key === 'off' ? async e => { e.stopPropagation(); if (await confirmDialog(`Forget ${x.name}?`, 'Forget')) { try { await R.removeHostById(x.id); } catch (err) { toast(err.message); } } } : null,
           });
         }),
@@ -380,15 +386,48 @@ async function onCommand(h0, cmd) {
     if (host !== h0) return;
     if (Date.now() - (cmd.created || 0) > R.COMMAND_TTL) return;
     await R.updateCommand(cmd.id, { status: 'taken' });
-    if (cmd.type === 'stop') runs.get(cmd.session)?.controller.abort();
+    if (cmd.type === 'stop') { if (cmd.session === 'bench') h0.bench?.abort(); else runs.get(cmd.session)?.controller.abort(); }
     else if (cmd.type === 'answer') h0.answers.get(cmd.pending)?.(cmd.answer);
     else if (cmd.type === 'refresh') refreshCatalog().catch(() => {});
+    else if (cmd.type === 'bench') hostBench(h0, cmd).catch(e => console.warn('bench failed', e));
     else if (cmd.type === 'send') hostSend(h0, cmd).catch(e => hostFail(h0, cmd.session, e));
   } catch (e) {
     console.warn('command failed', e);
   } finally {
     R.deleteCommand(cmd.id).catch(() => {});
   }
+}
+
+/** Benchmark models for another device: results go to the account's model stats, progress to live/bench-<host>. */
+async function hostBench(h0, cmd) {
+  if (h0.bench) throw new Error('A benchmark is already running on this PC');
+  const { opts, models } = JSON.parse(cmd.text || '{}');
+  const st = state.store;
+  const conns = await st.listConnections();
+  const byConn = new Map();
+  for (const m of models || []) {
+    const conn = conns.find(c => c.id === m.c);
+    if (!conn) continue;
+    if (!byConn.has(conn.id)) byConn.set(conn.id, { conn, models: [] });
+    byConn.get(conn.id).models.push(m.n);
+  }
+  const groups = [...byConn.values()];
+  const total = groups.reduce((n, g) => n + g.models.length, 0);
+  const ctrl = new AbortController();
+  h0.bench = ctrl;
+  let done = 0;
+  const id = 'bench-' + R.hostId();
+  const live = (stateName, phase, detail) => R.writeLive(id, { host: R.hostId(), hostName: h0.name, state: stateName, phase, detail: String(detail || '').slice(0, 1500), step: done, maxSteps: total }).catch(() => {});
+  await live('running', 'Benchmark', 'starting…');
+  try {
+    await runBench(groups, opts, {
+      signal: ctrl.signal,
+      save: (conn, name, res) => st.updateModelMeta(conn.url, name, res),
+      onStart: (conn, name) => live('running', 'Benchmark', `${name} on ${conn.label || new URL(conn.url).host}`),
+      onDone: () => { done++; },
+    });
+  } finally { h0.bench = null; }
+  await live('idle', ctrl.signal.aborted ? `■ Benchmark stopped (${done}/${total})` : `✓ Benchmark finished: ${done} models`, '');
 }
 
 function hostFail(h0, session, e) {
