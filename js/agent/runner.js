@@ -1,397 +1,415 @@
-// The agent loop.
-//
-// Each step: build the system prompt → fit the context (prune, compact) → stream the model →
-// recover text-written tool calls → run tools (read-only ones in parallel, edits sequentially,
-// with approvals) → feed results back. Stops when the model answers without tools, with
-// safeguards: loop detection, empty-reply nudge, auto-continue on unfinished todos, step limit,
-// and a stall watchdog (no tokens for too long → retry the step).
-//
-// A run captures its server, model list, model and workspace when it starts, so it keeps
-// working in the background while you switch conversations, models or servers.
-// Live progress is written to run.status (read by the UI every second).
-import { state, emit, subagents } from '../core/state.js';
-import { chatStream, HttpError, StallError } from '../core/ollama.js';
-import { TOOLS, toolSchemas, toolProtocolPrompt } from './tools.js';
-import { extractToolCalls, hasCallMarkup, callProgress, CALL_OPEN } from './parse.js';
-import { prepareMessages, estimateTokens, compactThread, toTextProtocol } from './context.js';
-import { parseArgs, clip } from '../util/misc.js';
-import { toolTitle } from '../ui/chat.js';
+// Agent tools: definitions (JSON schema for the model) + implementations.
+// ctx passed to run(): { fs, signal, tracker:{read:Set, changes:Map}, changed(path), setTodos, askUser, spawn }
+import { normPath, globToRegex } from '../core/fs.js';
+import { clip } from '../util/misc.js';
+import { webFetch, webSearch } from './web.js';
+import { CALL_OPEN, CALL_CLOSE } from './parse.js';
 
-/** Per-run tracker, shared with subagents. */
-export function createRun({ conn = state.conn, model = state.model, fs = state.fs, models = state.models } = {}) {
-  const now = Date.now();
-  return {
-    started: now, steps: 0, toolCalls: 0, toolErrors: 0, changes: new Map(), read: new Set(), byModel: {},
-    conn, model, fs, models,
-    status: { phase: 'starting', detail: '', since: now, lastActivity: now, step: 0, chars: 0, firstTokenAt: 0, retries: 0, agent: '', depth: 0 },
-    retryStep: null, // set by the runner; the UI calls it to abort and retry the current model request
-  };
+const S = description => ({ type: 'string', description });
+const B = description => ({ type: 'boolean', description });
+const I = description => ({ type: 'integer', description });
+
+const isBinary = t => t.includes('\u0000');
+
+async function filesUnder(fs, dir) {
+  const p = normPath(dir || '');
+  const all = await fs.list();
+  return p ? all.filter(f => f === p || f.startsWith(p + '/')) : all;
 }
 
-/** Update the live status. phase: waiting | thinking | writing | calling | tool | approval | question | compacting | retrying | done */
-export function setPhase(run, phase, detail = '', extra = {}) {
-  const now = Date.now();
-  Object.assign(run.status, { phase, detail, since: now, lastActivity: now }, extra);
-  emit('run-status', run);
+function markChanged(ctx, p, kind) {
+  const prev = ctx.tracker.changes.get(p);
+  ctx.tracker.changes.set(p, prev === 'created' && kind === 'modified' ? 'created' : kind);
+  ctx.changed(p);
 }
 
-const capsOf = (run, model) => run.models.find(m => m.name === model)?.caps || [];
-const resolveModel = (agent, run) => (agent.model && run.models.some(m => m.name === agent.model) ? agent.model : run.model);
-const agentTools = (agent, depth) => (agent.tools || []).filter(n => TOOLS[n]
-  && !(n === 'task' && (depth > 0 || !subagents().length))
-  && !(TOOLS[n].web && !state.settings.webEnabled));
-const autoApproved = (perm, run) => { const mode = run?.perm || state.settings.perm; return mode === 'auto' || (mode === 'edits' && perm === 'edit'); };
-
-const fileCache = new WeakMap(); // fs -> { t, list }
-async function workspaceFiles(fs) {
-  const c = fileCache.get(fs);
-  if (c && Date.now() - c.t < 2000) return c.list;
-  let list = [];
-  try { list = await fs.list(); } catch { /* ignore */ }
-  fileCache.set(fs, { t: Date.now(), list });
-  return list;
-}
-export const invalidateFileCache = () => { if (state.fs) fileCache.delete(state.fs); };
-
-async function systemPrompt(agent, thread, names, fs) {
-  const files = await workspaceFiles(fs);
-  let rules = '';
-  if (files.includes('AGENTS.md')) { try { rules = clip(await fs.read('AGENTS.md'), 6000); } catch { /* ignore */ } }
-  const web = names.includes('web_fetch') || names.includes('web_search');
-  const parts = [
-    agent.prompt.trim(),
-    '# Environment\n' +
-      `- Workspace: ${fs.label}\n- Date: ${new Date().toDateString()}\n- Paths are relative to the workspace root and use "/".\n` +
-      (names.length ? `- Tools: ${names.join(', ')}` : '- No tools are available right now. Answer directly; if files would need changes, show the code in your reply.') +
-      (web ? '\n- You have internet access: use web_search to find pages (official docs, SDK references, changelogs) and web_fetch to read them. Prefer official sources and cite the URLs you used.' : ''),
-    `# Workspace files (${files.length})\n` + (files.length ? files.slice(0, 200).join('\n') + (files.length > 200 ? `\n… ${files.length - 200} more (use find_files)` : '') : '(empty)'),
-  ];
-  if (rules) parts.push('# Project instructions (AGENTS.md)\n' + rules);
-  if (thread.summary) parts.push('# Summary of the earlier conversation (older messages were compacted)\n' + thread.summary);
-  return parts.join('\n\n');
-}
-
-function nudge(thread, view, text, label) {
-  thread.messages.push({ role: 'user', content: text, _auto: true });
-  view.note('↻ ' + label, 'auto');
-}
-
-const ZERO_STATS = () => ({ requests: 0, evalTokens: 0, evalNs: 0, promptTokens: 0, toolCalls: 0, toolErrors: 0, fails: 0 });
-
-/** Count a failed model request (connection cut, EOF, out of memory, stall …) for the reliability score. */
-function noteFail(run, model, e) {
-  if (!model || e?.name === 'AbortError') return;
-  if (e instanceof HttpError && /support|think/i.test(e.detail || '')) return; // capability negotiation, not a failure
-  (run.byModel[model] ||= ZERO_STATS()).fails++;
-  (run.lastFail ||= {})[model] = String(e?.message || e).replace(/\s+/g, ' ').slice(0, 240);
-}
-
-/** Stream one model request with a per-step controller that the UI can abort to retry. */
-async function requestStep(run, body, block, signal, prefix, streamTools) {
-  const S = state.settings;
-  // Native tool calls arrive only when complete (silence while the model writes a file): be patient.
-  const nativeTools = !!body.tools;
-  const first = (S.firstTokenTimeout || 0) * 1000, idle = (S.idleTimeout || 0) * 1000;
-  run.status.nativeTools = nativeTools;
-  for (let attempt = 0; ; attempt++) {
-    const step = new AbortController();
-    const onAbort = () => step.abort();
-    signal.addEventListener('abort', onAbort, { once: true });
-    let manual = false;
-    run.retryStep = () => { manual = true; step.abort(); };
-    setPhase(run, 'waiting', `${prefix}sent ${fmtK(JSON.stringify(body.messages).length / 3.6)} tokens of context`, { chars: 0, firstTokenAt: 0 });
-    try {
-      return await chatStream(body, {
-        signal: step.signal,
-        conn: run.conn,
-        firstTokenTimeout: nativeTools && first ? Math.max(first, 1800000) : first,
-        idleTimeout: nativeTools && idle ? Math.max(idle, 1800000) : idle,
-        onRetry: (n, e) => { noteFail(run, body.model, e); setPhase(run, 'retrying', `${prefix}server error, retry ${n}: ${e.message}`); },
-        onChunk: (m, acc) => {
-          const st = run.status;
-          const now = Date.now();
-          if (!st.firstTokenAt) st.firstTokenAt = now;
-          st.lastActivity = now;
-          st.chars = acc.thinking.length + acc.content.length;
-          let phase = m.tool_calls?.length ? 'calling' : m.content ? 'writing' : m.thinking ? 'thinking' : st.phase;
-          let detail = phase === 'calling' ? 'tool calls received' : '';
-          let shown = acc.content;
-          const cp = streamTools ? callProgress(acc.content) : null;
-          if (cp) {
-            // Live progress of a tool call being written (e.g. a whole file).
-            const n = cp.count, cur = cp.current;
-            const name = cur.match(/"name"\s*:\s*"([^"]+)"/)?.[1] || '…';
-            const target = cur.match(/"(?:path|url|pattern|query|agent|from)"\s*:\s*"([^"]{1,120})"/)?.[1] || '';
-            const lines = (cur.match(/\\n/g) || []).length + 1;
-            phase = 'calling';
-            detail = `${n > 1 ? `call ${n}: ` : ''}${name}${target ? ' ' + target : ''} · ${fmtK(cur.length)} chars${lines > 1 ? ` · ${lines} lines` : ''}`;
-            shown = acc.content.slice(0, cp.first) + `\n\n*✍ Writing tool call ${detail}…*`;
-          }
-          if (phase !== st.phase) { st.phase = phase; st.since = now; emit('run-status', run); }
-          st.detail = prefix + detail;
-          if (acc.thinking) block.thinking(acc.thinking);
-          block.text(shown);
-        },
-      });
-    } catch (e) {
-      const stalled = e instanceof StallError || (manual && !signal.aborted);
-      if (!signal.aborted && !manual) noteFail(run, body.model, e);
-      if (!stalled || signal.aborted) throw e;
-      if (attempt >= (manual ? 5 : S.autoRetryStall ? 1 : 0)) throw new Error(`The model stopped responding (${e.message}). The server may be overloaded, out of memory, or the model got stuck.`);
-      block.reset();
-      run.status.retries++;
-      setPhase(run, 'retrying', `${prefix}${manual ? 'retrying on your request' : e.message + ', retrying the step'}`);
-    } finally {
-      signal.removeEventListener('abort', onAbort);
-      run.retryStep = null;
-    }
+/** Whitespace/indentation-insensitive line-block replacement. */
+function fuzzyReplace(text, oldS, newS) {
+  const lines = text.split('\n');
+  const olds = oldS.replace(/\n$/, '').split('\n');
+  const target = olds.map(l => l.trim());
+  if (!target.join('')) return { count: 0 };
+  const hits = [];
+  for (let i = 0; i + olds.length <= lines.length; i++) {
+    let ok = true;
+    for (let j = 0; j < olds.length; j++) if (lines[i + j].trim() !== target[j]) { ok = false; break; }
+    if (ok) hits.push(i);
   }
+  if (hits.length !== 1) return { count: hits.length };
+  const i = hits[0];
+  const fileIndent = lines[i].match(/^\s*/)[0], oldIndent = olds[0].match(/^\s*/)[0];
+  let repl = newS === '' ? [] : newS.replace(/\n$/, '').split('\n');
+  if (fileIndent !== oldIndent) repl = repl.map(l => (l.startsWith(oldIndent) ? fileIndent + l.slice(oldIndent.length) : l));
+  lines.splice(i, olds.length, ...repl);
+  return { text: lines.join('\n'), count: 1 };
 }
 
-const fmtK = n => (n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(Math.round(n)));
+async function snapshotFiles(fs) {
+  const files = {};
+  let total = 0;
+  for (const p of await fs.list()) {
+    if (total > 3e6) break;
+    try {
+      const t = await fs.read(p);
+      if (t.length < 400000 && !isBinary(t)) { files[p] = t; total += t.length; }
+    } catch { /* skip */ }
+  }
+  return files;
+}
+
+const WORKER_SRC = `
+const out = [];
+const fmt = v => { if (typeof v === 'string') return v; try { return JSON.stringify(v, (k, x) => typeof x === 'bigint' ? String(x) : x, 2); } catch { return String(v); } };
+const log = (...a) => out.push(a.map(fmt).join(' '));
+console.log = console.info = console.debug = log;
+console.warn = (...a) => log('[warn]', ...a);
+console.error = (...a) => log('[error]', ...a);
+console.table = v => log(v);
+self.onmessage = async (e) => {
+  const { code, files } = e.data;
+  try {
+    const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+    const result = await new AsyncFunction('files', code)(files);
+    postMessage({ out: out.join('\\n'), result: result === undefined ? undefined : fmt(result) });
+  } catch (err) {
+    postMessage({ out: out.join('\\n'), error: String((err && err.stack) || err) });
+  }
+};`;
+
+function runInWorker(code, files, signal, timeout = 15000) {
+  return new Promise(resolve => {
+    const url = URL.createObjectURL(new Blob([WORKER_SRC], { type: 'text/javascript' }));
+    const worker = new Worker(url);
+    let timer;
+    const finish = v => { clearTimeout(timer); worker.terminate(); URL.revokeObjectURL(url); resolve(v); };
+    timer = setTimeout(() => finish(`Error: timed out after ${timeout / 1000}s (infinite loop or never-resolving promise?)`), timeout);
+    signal?.addEventListener('abort', () => finish('Interrupted.'), { once: true });
+    worker.onmessage = e => {
+      const { out, result, error } = e.data;
+      finish([error && 'Error: ' + error, out && 'Output:\n' + out, result !== undefined && 'Return value: ' + result]
+        .filter(Boolean).join('\n') || '(no output: use console.log or return a value)');
+    };
+    worker.onerror = e => { e.preventDefault(); finish('Error: ' + (e.message || 'worker failed')); };
+    worker.postMessage({ code: String(code ?? ''), files });
+  });
+}
 
 /**
- * Run an agent on a thread ({ messages, summary, summaryUpto }).
- * hooks: { persist(), getTodos(), setTodos(list), confirm(card, def) → bool, askUser(q, options, card) → string, stats(s) }
- * Returns { text, finished }.
+ * readOnly: may run in parallel with other readOnly calls.
+ * perm: 'edit' | 'exec' | undefined — needs approval unless auto-approved in settings.
  */
-export async function runAgent({ agent, thread, view, signal, run, hooks = {}, depth = 0 }) {
-  const S = state.settings;
-  const model = resolveModel(agent, run);
-  if (!model) throw new Error('No model selected');
-  const caps = capsOf(run, model);
-  // Streamed mode works with any model (tools are described in the prompt); native needs the "tools" capability.
-  const streamTools = S.toolMode !== 'native';
-  let names = !streamTools && caps.length && !caps.includes('tools') ? [] : agentTools(agent, depth);
-  const fullSystem = async () => {
-    const base = await systemPrompt(agent, thread, names, run.fs);
-    return streamTools && names.length ? base + '\n\n' + toolProtocolPrompt(names, subagents()) : base;
-  };
-  let think = caps.includes('thinking') && S.think !== 'auto' ? (S.think === 'on' ? true : S.think === 'off' ? false : S.think) : undefined;
-  const budget = Math.max(2048, Math.floor(S.num_ctx * 0.75) - 512);
-  const canWrite = names.some(n => TOOLS[n].perm === 'edit');
-  const label = agent.name + (depth ? ' · subagent' : '');
-  const prefix = depth ? `${agent.name}: ` : '';
-  const stats = (run.byModel[model] ||= ZERO_STATS());
-  const loop = { history: [], strikes: 0, stop: false };
-  const nudges = { empty: 0, todos: 0, malformed: 0 };
-  const parentStep = run.status.step;
+export const TOOLS = {
+  list_files: {
+    readOnly: true,
+    description: 'List all files in the workspace recursively, optionally only under one directory.',
+    parameters: { path: S('Directory relative to the workspace root. Omit to list everything.') },
+    async run({ path }, ctx) {
+      const files = await filesUnder(ctx.fs, path);
+      if (!files.length) return path ? `No files under "${path}".` : 'The workspace is empty.';
+      return clip(files.join('\n'), 20000) + `\n(${files.length} files)`;
+    },
+  },
 
-  for (let step = 0; step < S.maxSteps; step++) {
-    run.steps++;
-    if (!depth) run.status.step = step + 1;
-    Object.assign(run.status, { agent: agent.name, depth, model, maxSteps: S.maxSteps });
+  find_files: {
+    readOnly: true,
+    description: 'Find files whose path matches a glob pattern, e.g. "**/*.js", "src/**/*.css", "*.html".',
+    parameters: { pattern: S('Glob pattern: * matches within one folder, ** across folders, {a,b} alternatives.') },
+    required: ['pattern'],
+    async run({ pattern }, ctx) {
+      const re = globToRegex(pattern);
+      const nameOnly = !String(pattern).includes('/');
+      const hits = (await ctx.fs.list()).filter(f => re.test(f) || (nameOnly && re.test(f.split('/').pop())));
+      return hits.length ? clip(hits.join('\n'), 20000) + `\n(${hits.length} matches)` : `No files match "${pattern}".`;
+    },
+  },
 
-    // 1) Fit the context window
-    let system = await fullSystem();
-    let { msgs, tokens } = prepareMessages(thread, budget - estimateTokens(system));
-    if (S.autoCompact && tokens + estimateTokens(system) > budget) {
-      const note = view.note('Compacting context…', 'auto');
-      setPhase(run, 'compacting', prefix + 'summarizing older messages to fit the context window');
-      try {
-        const n = await compactThread(thread, { model, conn: run.conn, budget: budget - estimateTokens(system), signal, num_ctx: S.num_ctx, think: think === undefined ? undefined : false });
-        note.textContent = n ? `↻ Context compacted: ${n} older messages summarized` : 'Context is large and could not be compacted further';
-        if (n) {
-          await hooks.persist?.();
-          system = await fullSystem();
-          ({ msgs, tokens } = prepareMessages(thread, budget - estimateTokens(system)));
+  read_file: {
+    readOnly: true,
+    description: 'Read a text file. Returns lines prefixed with line numbers ("  12| text"); the prefix is not part of the file. For large files read a section with offset/limit.',
+    parameters: { path: S('File path'), offset: I('First line to read, 1-based (default 1)'), limit: I('Maximum number of lines (default 2000)') },
+    required: ['path'],
+    async run({ path, offset = 1, limit = 2000 }, ctx) {
+      const p = normPath(path);
+      const text = await ctx.fs.read(p);
+      ctx.tracker.read.add(p);
+      if (isBinary(text)) return `${p} looks like a binary file and cannot be shown.`;
+      if (!text) return `${p} is empty.`;
+      const lines = text.split('\n');
+      const start = Math.max(1, parseInt(offset, 10) || 1) - 1;
+      const n = Math.max(1, parseInt(limit, 10) || 2000);
+      const slice = lines.slice(start, start + n);
+      let out = slice.map((l, i) => `${String(start + i + 1).padStart(5)}| ${l.length > 2000 ? l.slice(0, 2000) + '…' : l}`).join('\n');
+      if (out.length > 80000) out = out.slice(0, 80000) + '\n…[output truncated; read a smaller range]';
+      const rest = lines.length - start - slice.length;
+      if (rest > 0) out += `\n… ${rest} more lines (continue with offset=${start + slice.length + 1})`;
+      return out;
+    },
+  },
+
+  grep: {
+    readOnly: true,
+    description: 'Search file contents with a JavaScript regular expression. Returns "path:line: text" for each matching line.',
+    parameters: {
+      pattern: S('Regular expression'),
+      path: S('Optional directory or file to search in'),
+      include: S('Optional glob filter for file names, e.g. "*.js"'),
+      ignore_case: B('Case-insensitive search (default true)'),
+    },
+    required: ['pattern'],
+    async run({ pattern, path, include, ignore_case = true }, ctx) {
+      let re;
+      try { re = new RegExp(pattern, ignore_case === false ? '' : 'i'); } catch (e) { throw new Error('Invalid regular expression: ' + e.message); }
+      const inc = include ? globToRegex(include) : null;
+      const files = (await filesUnder(ctx.fs, path)).filter(f => !inc || inc.test(f) || inc.test(f.split('/').pop()));
+      const out = [];
+      let total = 0;
+      for (const f of files) {
+        let t;
+        try { t = await ctx.fs.read(f); } catch { continue; }
+        if (t.length > 1e6 || isBinary(t)) continue;
+        const lines = t.split('\n');
+        for (let i = 0; i < lines.length; i++) {
+          if (re.test(lines[i])) { total++; if (out.length < 150) out.push(`${f}:${i + 1}: ${lines[i].trim().slice(0, 240)}`); }
         }
-      } catch (e) {
-        if (e.name === 'AbortError') throw e;
-        note.textContent = 'Compaction failed: ' + e.message;
       }
-    }
+      if (!total) return 'No matches.';
+      return out.join('\n') + (total > out.length ? `\n… ${total - out.length} more matches (narrow the search)` : '');
+    },
+  },
 
-    // 2) Ask the model (streaming, with stall watchdog)
-    const block = view.block(label);
-    const useText = streamTools && names.length > 0;
-    const body = {
-      model,
-      messages: [{ role: 'system', content: system }, ...(useText ? toTextProtocol(msgs) : msgs)],
-      options: { temperature: agent.temperature ?? S.temperature, num_ctx: S.num_ctx },
-    };
-    if (useText) body.options.stop = ['<tool_result'];
-    else if (names.length) body.tools = toolSchemas(names, subagents());
-    if (think !== undefined) body.think = think;
+  write_file: {
+    perm: 'edit',
+    description: 'Create a new file, or completely replace an existing one (read it first). Parent folders are created automatically. Always provide the complete file content.',
+    parameters: { path: S('File path'), content: S('The complete file content') },
+    required: ['path', 'content'],
+    async run({ path, content }, ctx) {
+      const p = normPath(path);
+      if (!p) throw new Error('path is required');
+      const exists = await ctx.fs.exists(p);
+      if (exists && !ctx.tracker.read.has(p)) throw new Error(`${p} already exists. Read it with read_file first, then overwrite it, or use edit_file for a targeted change.`);
+      const text = String(content ?? '');
+      await ctx.fs.write(p, text);
+      ctx.tracker.read.add(p);
+      markChanged(ctx, p, exists ? 'modified' : 'created');
+      return `${exists ? 'Overwrote' : 'Created'} ${p} (${text.split('\n').length} lines).`;
+    },
+  },
 
-    let res;
-    try {
-      res = await requestStep(run, body, block, signal, prefix, useText);
-    } catch (e) {
-      block.finish();
-      if (e instanceof HttpError && body.tools && /does not support tools|tools? (are|is) not supported/i.test(e.detail)) {
-        names = [];
-        view.note('This model does not support tool calling: continuing in chat-only mode.', 'warn');
-        run.steps--; step--; continue;
+  edit_file: {
+    perm: 'edit',
+    description: 'Replace an exact piece of text in a file. old_string must match the file exactly (without read_file line-number prefixes) and be unique unless replace_all is true. Include a few surrounding lines to make it unique. Read the file first.',
+    parameters: {
+      path: S('File path'),
+      old_string: S('Exact text to replace'),
+      new_string: S('Replacement text'),
+      replace_all: B('Replace every occurrence (default false)'),
+    },
+    required: ['path', 'old_string', 'new_string'],
+    async run({ path, old_string, new_string = '', replace_all = false }, ctx) {
+      const p = normPath(path);
+      if (!(await ctx.fs.exists(p))) throw new Error(`${p} does not exist. Use write_file to create it.`);
+      if (!ctx.tracker.read.has(p)) throw new Error(`Read ${p} with read_file before editing it.`);
+      if (old_string == null || old_string === '') throw new Error('old_string must not be empty (use write_file to replace a whole file).');
+      if (old_string === new_string) throw new Error('old_string and new_string are identical; nothing to change.');
+      const raw = await ctx.fs.read(p);
+      const crlf = raw.includes('\r\n');
+      const text = crlf ? raw.replace(/\r\n/g, '\n') : raw;
+      let oldS = String(old_string).replace(/\r\n/g, '\n');
+      const newS = String(new_string ?? '').replace(/\r\n/g, '\n');
+      let count = text.split(oldS).length - 1;
+      let note = '';
+      if (!count) {
+        const stripped = oldS.replace(/^ *\d+\| ?/gm, '');
+        if (stripped !== oldS && text.includes(stripped)) { oldS = stripped; count = text.split(oldS).length - 1; note = ' (removed line-number prefixes from old_string)'; }
       }
-      if (e instanceof HttpError && body.think !== undefined && /think/i.test(e.detail)) {
-        think = undefined; run.steps--; step--; continue;
+      let out;
+      if (count === 1 || (count > 1 && replace_all)) {
+        out = replace_all ? text.split(oldS).join(newS) : text.replace(oldS, () => newS);
+      } else if (count > 1) {
+        throw new Error(`old_string matches ${count} places in ${p}. Include more surrounding lines to make it unique, or set replace_all=true.`);
+      } else {
+        const f = fuzzyReplace(text, oldS, newS);
+        if (f.text != null) { out = f.text; count = 1; note = ' (matched ignoring whitespace/indentation differences)'; }
+        else if (f.count > 1) throw new Error(`old_string matches ${f.count} places (ignoring whitespace). Include more surrounding lines.`);
+        else throw new Error(`old_string was not found in ${p}. Read the file again and copy the exact current text, including whitespace.`);
       }
-      throw e;
+      await ctx.fs.write(p, crlf ? out.replace(/\n/g, '\r\n') : out);
+      markChanged(ctx, p, 'modified');
+      const n = replace_all ? count : 1;
+      return `Edited ${p}: ${n} replacement${n > 1 ? 's' : ''}${note}.`;
+    },
+  },
+
+  move_file: {
+    perm: 'edit',
+    description: 'Move or rename a file.',
+    parameters: { from: S('Current path'), to: S('New path') },
+    required: ['from', 'to'],
+    async run({ from, to }, ctx) {
+      const a = normPath(from), b = normPath(to);
+      if (await ctx.fs.exists(b)) throw new Error(`${b} already exists.`);
+      await ctx.fs.move(a, b);
+      ctx.tracker.read.add(b);
+      markChanged(ctx, a, 'deleted');
+      markChanged(ctx, b, 'created');
+      return `Moved ${a} → ${b}.`;
+    },
+  },
+
+  delete_file: {
+    perm: 'edit',
+    description: 'Delete a file.',
+    parameters: { path: S('File path') },
+    required: ['path'],
+    async run({ path }, ctx) {
+      const p = normPath(path);
+      await ctx.fs.remove(p);
+      markChanged(ctx, p, 'deleted');
+      return `Deleted ${p}.`;
+    },
+  },
+
+  run_js: {
+    perm: 'exec',
+    description: 'Run JavaScript in an isolated web worker (no DOM, no network guarantees, 15 s limit). Top-level await works. Workspace text files are available read-only as `files` (an object: path → content). Output from console.log and the returned value are reported. Use it to test logic.',
+    parameters: { code: S('JavaScript code to run') },
+    required: ['code'],
+    async run({ code }, ctx) {
+      return runInWorker(code, await snapshotFiles(ctx.fs), ctx.signal);
+    },
+  },
+
+  web_search: {
+    readOnly: true,
+    web: true,
+    description: 'Search the internet. Returns titles, URLs and snippets. Use it to find official documentation, SDK references, API changes and examples; then read pages with web_fetch.',
+    parameters: { query: S('Search query, e.g. "stripe node sdk create payment intent docs"'), max_results: I('Number of results, 1-10 (default 8)') },
+    required: ['query'],
+    async run({ query, max_results = 8 }, ctx) {
+      const { provider, results } = await webSearch(String(query || ''), Math.min(10, Math.max(1, parseInt(max_results, 10) || 8)), ctx.signal);
+      return `Results from ${provider} for "${query}":\n\n` + results.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}${r.snippet ? '\n   ' + clip(r.snippet.replace(/\s+/g, ' '), 300) : ''}`).join('\n');
+    },
+  },
+
+  web_fetch: {
+    readOnly: true,
+    web: true,
+    description: 'Read a web page (documentation, README, API reference, raw file) as text/Markdown. Long pages are returned in chunks: call again with the given offset to continue.',
+    parameters: { url: S('Full URL (https://...)'), offset: I('Character offset to continue reading a long page (default 0)'), max_chars: I('Maximum characters to return (default 20000)') },
+    required: ['url'],
+    async run({ url, offset = 0, max_chars = 20000 }, ctx) {
+      const page = await webFetch(String(url || '').trim(), ctx.signal);
+      const start = Math.max(0, parseInt(offset, 10) || 0);
+      const n = Math.min(40000, Math.max(1000, parseInt(max_chars, 10) || 20000));
+      const chunk = page.content.slice(start, start + n);
+      const rest = page.content.length - start - chunk.length;
+      return `# ${page.title}\nURL: ${url} (via ${page.via}, ${page.content.length} chars)\n\n${chunk}` +
+        (rest > 0 ? `\n\n…[${rest} more chars: call web_fetch again with offset=${start + chunk.length}]` : '');
+    },
+  },
+
+  todo_write: {
+    description: 'Create or update the task list for the current work. Always send the complete list. Status is one of pending, in_progress, completed. Keep exactly one item in_progress while working.',
+    parameters: {
+      todos: {
+        type: 'array',
+        description: 'The full todo list',
+        items: {
+          type: 'object',
+          properties: { content: S('Task description'), status: { type: 'string', enum: ['pending', 'in_progress', 'completed'] } },
+          required: ['content', 'status'],
+        },
+      },
+    },
+    required: ['todos'],
+    async run({ todos }, ctx) {
+      if (typeof todos === 'string') { try { todos = JSON.parse(todos); } catch { /* handled below */ } }
+      if (!Array.isArray(todos)) throw new Error('todos must be an array of { content, status }.');
+      const list = todos.slice(0, 100).map(t => ({
+        content: String(typeof t === 'string' ? t : t?.content ?? '').slice(0, 500),
+        status: ['pending', 'in_progress', 'completed'].includes(t?.status) ? t.status : 'pending',
+      })).filter(t => t.content);
+      ctx.setTodos(list);
+      const done = list.filter(t => t.status === 'completed').length;
+      return `Todo list updated: ${done}/${list.length} completed.`;
+    },
+  },
+
+  ask_user: {
+    description: 'Ask the user a question and wait for the answer. Only use this when you truly need a decision or information you cannot reasonably assume.',
+    parameters: {
+      question: S('The question to ask'),
+      options: { type: 'array', items: { type: 'string' }, description: 'Optional suggested answers the user can click' },
+    },
+    required: ['question'],
+    async run({ question, options }, ctx) {
+      const answer = await ctx.askUser(String(question || ''), Array.isArray(options) ? options.slice(0, 8).map(String) : []);
+      return `The user answered: ${answer}`;
+    },
+  },
+
+  task: {
+    description: '(built dynamically from the available subagents)',
+    parameters: {},
+    required: ['agent', 'prompt'],
+    run({ agent, prompt }, ctx) { return ctx.spawn(agent, prompt); },
+  },
+};
+
+/** JSON schemas for the Ollama `tools` field. */
+export function toolSchemas(names, subs = []) {
+  return names.map(name => {
+    if (name === 'task') {
+      return {
+        type: 'function',
+        function: {
+          name: 'task',
+          description: 'Delegate a self-contained job to a subagent that works independently with its own tools and returns a report. Subagents: ' +
+            subs.map(a => `"${a.name}" (${a.desc || 'no description'})`).join('; '),
+          parameters: {
+            type: 'object',
+            properties: {
+              agent: { type: 'string', enum: subs.map(a => a.name), description: 'Subagent name' },
+              prompt: S('Complete, self-contained instructions. The subagent cannot see this conversation.'),
+            },
+            required: ['agent', 'prompt'],
+          },
+        },
+      };
     }
-
-    stats.requests++;
-    if (res.stats) {
-      stats.evalTokens += res.stats.eval_count || 0;
-      stats.evalNs += res.stats.eval_duration || 0;
-      stats.promptTokens += res.stats.prompt_eval_count || 0;
-      if (!depth) hooks.stats?.({
-        prompt: res.stats.prompt_eval_count || 0,
-        output: res.stats.eval_count || 0,
-        tps: res.stats.eval_duration ? res.stats.eval_count / (res.stats.eval_duration / 1e9) : 0,
-      });
-    }
-
-    // 3) Tool calls: native, or recovered from text
-    let calls = (res.tool_calls || []).filter(c => c?.function?.name);
-    let content = res.content;
-    if (!calls.length && names.length) {
-      const parsed = extractToolCalls(content, names);
-      if (parsed) { calls = parsed.calls; content = parsed.rest; if (!useText) block.badge('tool call recovered from text'); }
-      else if (useText && hasCallMarkup(content)) {
-        if (nudges.malformed < 3) {
-          // A malformed call: tell the model instead of silently treating it as a final answer.
-          // Capped, so a model that keeps failing cannot loop (and rewrite a huge file) until the step limit.
-          nudges.malformed++;
-          thread.messages.push({ role: 'assistant', content, _agent: agent.name });
-          block.text(content, true); block.finish();
-          nudge(thread, view, `Your ${CALL_OPEN} block could not be parsed as JSON. Write it again as {"name": ..., "arguments": {...}} with valid JSON (escape newlines as \\n and quotes as \\").`, 'Malformed tool call: asking the model to fix it');
-          continue;
-        }
-        view.note('The model kept writing tool calls that could not be parsed; giving up on this call.', 'warn');
-      }
-    }
-    if (calls.length) nudges.malformed = 0;
-    block.text(content, true);
-
-    const msg = { role: 'assistant', content, _agent: agent.name };
-    if (res.thinking) msg.thinking = res.thinking;
-    if (calls.length) msg.tool_calls = calls.map(c => ({ function: { name: c.function.name, arguments: parseArgs(c.function.arguments) } }));
-    thread.messages.push(msg);
-
-    // 4) No tools → final answer (unless a nudge is warranted)
-    if (!calls.length) {
-      block.finish();
-      await hooks.persist?.();
-      if (!content.trim() && nudges.empty < 1) {
-        nudges.empty++;
-        nudge(thread, view, 'Your previous reply was empty. Continue the task: call a tool, or give your final answer to the user.', 'Empty reply: asking the model to continue');
-        continue;
-      }
-      const open = depth ? [] : (hooks.getTodos?.() || []).filter(t => t.status !== 'completed');
-      if (S.autoContinue && canWrite && open.length && nudges.todos < 2) {
-        nudges.todos++;
-        nudge(thread, view,
-          `You stopped, but these todo items are not completed:\n${open.map(t => `- [${t.status}] ${t.content}`).join('\n')}\n` +
-          'Continue working on them now. If they are already done or no longer needed, update the list with todo_write, then give your final summary.',
-          `Continuing: ${open.length} unfinished todo${open.length > 1 ? 's' : ''}`);
-        continue;
-      }
-      if (depth) run.status.step = parentStep;
-      return { text: content, finished: true };
-    }
-
-    // 5) Execute tools
-    await executeCalls(calls, block, { agent, names, run, stats, loop, hooks, signal, depth, thread, prefix });
-    block.finish();
-    await hooks.persist?.();
-    if (loop.stop) {
-      view.note('Stopped: the agent kept repeating the same action.', 'warn');
-      return { text: content, finished: false };
-    }
-  }
-  view.note(`Reached the step limit (${S.maxSteps}). Send "continue" to keep going, or raise the limit in Settings.`, 'warn');
-  return { text: '', finished: false };
-}
-
-async function executeCalls(calls, block, c) {
-  const cards = calls.map(call => block.tool(call));
-  const results = new Array(calls.length);
-  const exec = async k => { results[k] = await executeOne(calls[k], cards[k], c); };
-  const isRO = k => !!TOOLS[calls[k].function.name]?.readOnly;
-  try {
-    let i = 0;
-    while (i < calls.length) {
-      if (isRO(i)) {
-        let j = i;
-        while (j < calls.length && isRO(j)) j++;
-        await Promise.all(Array.from({ length: j - i }, (_, d) => exec(i + d)));
-        i = j;
-      } else { await exec(i); i++; }
-    }
-  } finally {
-    // Every tool call gets a result, even when interrupted, so the conversation stays valid.
-    calls.forEach((call, k) => {
-      c.thread.messages.push({ role: 'tool', tool_name: call.function.name, content: results[k] ?? 'Interrupted by the user.' });
-      if (results[k] == null) { cards[k].status('err'); cards[k].result('Interrupted'); }
-    });
-  }
-}
-
-async function executeOne(call, card, c) {
-  const name = call.function.name;
-  const args = parseArgs(call.function.arguments);
-  const def = TOOLS[name];
-  card.args(args);
-  c.run.toolCalls++; c.stats.toolCalls++;
-  const fail = text => { c.run.toolErrors++; c.stats.toolErrors++; card.status('err'); card.result(text); return text; };
-
-  if (!def || !c.names.includes(name)) return fail(`Error: unknown tool "${name}". Available tools: ${c.names.join(', ') || 'none'}.`);
-
-  // Loop guard: identical call repeated without any file change in between
-  const sig = name + ':' + JSON.stringify(args);
-  const repeats = c.loop.history.slice(-10).filter(s => s === sig).length;
-  c.loop.history.push(sig);
-  if (repeats >= 2 && name !== 'todo_write') {
-    if (++c.loop.strikes >= 3) c.loop.stop = true;
-    return fail(`Error: you already called ${name} with these exact arguments ${repeats} times and the result will not change. Try a different approach, or stop and report to the user.`);
-  }
-
-  if (def.perm && !autoApproved(def.perm, c.run)) {
-    card.status('pending');
-    setPhase(c.run, 'approval', `${c.prefix}${name} ${toolTitle(name, args)}`, { card });
-    const ok = c.hooks.confirm ? await c.hooks.confirm(card, def) : true;
-    if (c.signal.aborted) throw new DOMException('Aborted', 'AbortError');
-    if (!ok) return fail('Denied by the user. Do not retry this exact action; choose another approach or ask the user what they want.');
-  }
-
-  card.status('running');
-  setPhase(c.run, name === 'ask_user' ? 'question' : 'tool', `${c.prefix}${name} ${toolTitle(name, args)}`.trim(), { card });
-  if (name === 'task') card.open();
-  try {
-    let out = String((await def.run(args, toolContext(c, card))) ?? '');
-    if (out.length > 30000) out = clip(out, 30000);
-    if (def.perm === 'edit') c.loop.history = [];
-    card.status('ok');
-    card.result(out);
-    return out;
-  } catch (e) {
-    if (e.name === 'AbortError' || c.signal.aborted) throw e;
-    return fail('Error: ' + e.message);
-  }
-}
-
-function toolContext(c, card) {
-  return {
-    fs: c.run.fs,
-    signal: c.signal,
-    tracker: c.run,
-    changed: p => { fileCache.delete(c.run.fs); emit('fs-changed', p); },
-    setTodos: list => c.hooks.setTodos?.(list),
-    askUser: (q, options) => (c.hooks.askUser ? c.hooks.askUser(q, options, card) : Promise.resolve('(no user available: decide yourself)')),
-    spawn: (agentName, prompt) => spawnSubagent(agentName, prompt, card, c),
-  };
-}
-
-async function spawnSubagent(agentName, prompt, card, c) {
-  const ag = subagents().find(a => a.name === agentName || a.id === agentName);
-  if (!ag) throw new Error(`Unknown subagent "${agentName}". Available: ${subagents().map(a => a.name).join(', ') || 'none'}.`);
-  const thread = { messages: [{ role: 'user', content: String(prompt || '') }], summary: '', summaryUpto: 0 };
-  const before = new Map(c.run.changes);
-  const res = await runAgent({
-    agent: ag, thread, view: card.subView(), signal: c.signal, run: c.run, depth: c.depth + 1,
-    hooks: { confirm: c.hooks.confirm, askUser: c.hooks.askUser },
+    const t = TOOLS[name];
+    return { type: 'function', function: { name, description: t.description, parameters: { type: 'object', properties: t.parameters, required: t.required || [] } } };
   });
-  const changed = [...c.run.changes].filter(([p, k]) => before.get(p) !== k).map(([p, k]) => `${p} (${k})`);
-  return (res.text || '(the subagent finished without a report)') + (changed.length ? `\n\nFiles changed by the subagent: ${changed.join(', ')}` : '');
+}
+
+/**
+ * "Streamed" tool calling: tools are described in the system prompt and the model writes
+ * [CALL]{json}[/CALL] as normal text. Everything streams (you can watch a file being
+ * written), works with models that lack native tool support, and avoids Ollama buffering a
+ * whole tool call silently until it is complete.
+ */
+export function toolProtocolPrompt(names, subs = []) {
+  const docs = toolSchemas(names, subs).map(({ function: f }) => {
+    const props = f.parameters.properties || {};
+    const req = new Set(f.parameters.required || []);
+    const args = Object.entries(props).map(([k, p]) => {
+      const type = p.enum ? p.enum.map(v => JSON.stringify(v)).join(' | ') : p.type === 'array' ? 'array' : p.type;
+      return `  - ${k}${req.has(k) ? '' : ' (optional)'}: ${type}${p.description ? ' — ' + p.description : ''}`;
+    }).join('\n');
+    return `### ${f.name}\n${f.description}\n${args || '  (no arguments)'}`;
+  }).join('\n\n');
+  return `# How to use tools
+To call a tool, write a block exactly like this:
+${CALL_OPEN}
+{"name": "read_file", "arguments": {"path": "index.html"}}
+${CALL_CLOSE}
+Rules:
+- The block must contain valid JSON. Inside strings escape newlines as \\n and quotes as \\".
+- Always use the ${CALL_OPEN} ... ${CALL_CLOSE} markers. Never use <tool_call> tags or any other format.
+- You may write one short sentence before your calls, and several ${CALL_OPEN} blocks in one reply.
+- After your tool calls, STOP writing. The results arrive in the next message inside <tool_result> blocks. Never write <tool_result> yourself and never guess results.
+- When the task is done, reply normally with no ${CALL_OPEN} block.
+
+# Available tools
+${docs}`;
 }
