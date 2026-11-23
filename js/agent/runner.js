@@ -12,7 +12,7 @@
 import { state, emit, subagents } from '../core/state.js';
 import { chatStream, HttpError, StallError } from '../core/ollama.js';
 import { TOOLS, toolSchemas, toolProtocolPrompt } from './tools.js';
-import { extractToolCalls } from './parse.js';
+import { extractToolCalls, hasCallMarkup, callProgress, CALL_OPEN } from './parse.js';
 import { prepareMessages, estimateTokens, compactThread, toTextProtocol } from './context.js';
 import { parseArgs, clip } from '../util/misc.js';
 import { toolTitle } from '../ui/chat.js';
@@ -116,18 +116,16 @@ async function requestStep(run, body, block, signal, prefix, streamTools) {
           let phase = m.tool_calls?.length ? 'calling' : m.content ? 'writing' : m.thinking ? 'thinking' : st.phase;
           let detail = phase === 'calling' ? 'tool calls received' : '';
           let shown = acc.content;
-          const i = streamTools ? acc.content.indexOf('<tool_call>') : -1;
-          if (i >= 0) {
+          const cp = streamTools ? callProgress(acc.content) : null;
+          if (cp) {
             // Live progress of a tool call being written (e.g. a whole file).
-            const tail = acc.content.slice(i);
-            const n = tail.split('<tool_call>').length - 1;
-            const cur = tail.slice(tail.lastIndexOf('<tool_call>'));
+            const n = cp.count, cur = cp.current;
             const name = cur.match(/"name"\s*:\s*"([^"]+)"/)?.[1] || '…';
             const target = cur.match(/"(?:path|url|pattern|query|agent|from)"\s*:\s*"([^"]{1,120})"/)?.[1] || '';
             const lines = (cur.match(/\\n/g) || []).length + 1;
             phase = 'calling';
             detail = `${n > 1 ? `call ${n}: ` : ''}${name}${target ? ' ' + target : ''} · ${fmtK(cur.length)} chars${lines > 1 ? ` · ${lines} lines` : ''}`;
-            shown = acc.content.slice(0, i) + `\n\n*✍ Writing tool call ${detail}…*`;
+            shown = acc.content.slice(0, cp.first) + `\n\n*✍ Writing tool call ${detail}…*`;
           }
           if (phase !== st.phase) { st.phase = phase; st.since = now; emit('run-status', run); }
           st.detail = prefix + detail;
@@ -176,7 +174,7 @@ export async function runAgent({ agent, thread, view, signal, run, hooks = {}, d
   const prefix = depth ? `${agent.name}: ` : '';
   const stats = (run.byModel[model] ||= ZERO_STATS());
   const loop = { history: [], strikes: 0, stop: false };
-  const nudges = { empty: 0, todos: 0 };
+  const nudges = { empty: 0, todos: 0, malformed: 0 };
   const parentStep = run.status.step;
 
   for (let step = 0; step < S.maxSteps; step++) {
@@ -250,14 +248,20 @@ export async function runAgent({ agent, thread, view, signal, run, hooks = {}, d
     if (!calls.length && names.length) {
       const parsed = extractToolCalls(content, names);
       if (parsed) { calls = parsed.calls; content = parsed.rest; if (!useText) block.badge('tool call recovered from text'); }
-      else if (useText && /<tool_call>/.test(content)) {
-        // A malformed call: tell the model instead of silently treating it as a final answer.
-        thread.messages.push({ role: 'assistant', content, _agent: agent.name });
-        block.text(content, true); block.finish();
-        nudge(thread, view, 'Your <tool_call> block could not be parsed as JSON. Write it again as {"name": ..., "arguments": {...}} with valid JSON (escape newlines as \\n and quotes as \\").', 'Malformed tool call: asking the model to fix it');
-        continue;
+      else if (useText && hasCallMarkup(content)) {
+        if (nudges.malformed < 3) {
+          // A malformed call: tell the model instead of silently treating it as a final answer.
+          // Capped, so a model that keeps failing cannot loop (and rewrite a huge file) until the step limit.
+          nudges.malformed++;
+          thread.messages.push({ role: 'assistant', content, _agent: agent.name });
+          block.text(content, true); block.finish();
+          nudge(thread, view, `Your ${CALL_OPEN} block could not be parsed as JSON. Write it again as {"name": ..., "arguments": {...}} with valid JSON (escape newlines as \\n and quotes as \\").`, 'Malformed tool call: asking the model to fix it');
+          continue;
+        }
+        view.note('The model kept writing tool calls that could not be parsed; giving up on this call.', 'warn');
       }
     }
+    if (calls.length) nudges.malformed = 0;
     block.text(content, true);
 
     const msg = { role: 'assistant', content, _agent: agent.name };
