@@ -3,6 +3,7 @@ import { state, emit, DEFAULT_SETTINGS } from './core/state.js';
 import { LocalStore } from './core/storage/local.js';
 import { CloudStore } from './core/storage/cloud.js';
 import { getFirebaseConfig, initAuth, firebase, authErrorText } from './core/auth.js';
+import { migrateLegacyProxies } from './core/proxy.js';
 import { VirtualFS } from './core/fs.js';
 import { rebuildAgents } from './agent/agents.js';
 import { toast } from './util/dom.js';
@@ -25,6 +26,7 @@ async function loadUserData() {
   let settings = {};
   try { settings = await state.store.getSettings(); } catch (e) { console.warn(e); }
   state.settings = { ...DEFAULT_SETTINGS, ...settings };
+  await migrateLegacyProxies();
   let agents = [];
   try { agents = await state.store.listAgents(); } catch (e) { console.warn(e); }
   rebuildAgents(agents);
@@ -33,6 +35,7 @@ async function loadUserData() {
   state.session = null;
   await loadSessions();
   emit('settings');
+  emit('proxy');
   emit('agents');
 }
 

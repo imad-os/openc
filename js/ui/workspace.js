@@ -12,6 +12,7 @@ import { showConnect } from './connect.js';
 import { openRunningList, isRunning } from './runs.js';
 import { display, setDisplay } from './display.js';
 import { openSession } from './sessions.js';
+import { initProxies, openProxyPicker, paintProxyControls } from './proxies.js';
 
 let lastStats = null;
 
@@ -41,6 +42,10 @@ export function initWorkspace() {
   $('#b-set').addEventListener('click', () => openSettings());
   $('#b-display').addEventListener('click', () => openSettings('display'));
   $('#acct').addEventListener('click', openAccount);
+  $('#proxybtn').addEventListener('click', e => openProxyPicker(e.currentTarget));
+  $('#srv-proxy').addEventListener('click', e => openProxyPicker(e.currentTarget));
+  initProxies();
+  paintProxyControls();
   on('settings', () => { $('#perm').value = state.settings.perm; updateStatus(); });
   on('model', updateTop);
   on('models', updateTop);
@@ -70,6 +75,7 @@ export function enterWorkspace() {
   updateTop();
   refreshFiles();
   paintAccount();
+  paintProxyControls();
   setTimeout(() => $('#inp').focus());
 }
 

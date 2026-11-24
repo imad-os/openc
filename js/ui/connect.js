@@ -1,5 +1,6 @@
 // Servers screen: saved Ollama servers (URL, key, label, last model) and adding new ones.
 import { state, emit, on } from '../core/state.js';
+import { getActiveProxyUrl, getDisplayProxy, setUseProxy, upsertSingleProxyUrl, proxyLabel } from '../core/proxy.js';
 import { $, h, toast, confirmDialog } from '../util/dom.js';
 import { uid, fmt } from '../util/misc.js';
 import { normalizeUrl } from '../core/ollama.js';
@@ -8,6 +9,7 @@ import { loadModels, showModels } from './models.js';
 import { enterWorkspace } from './workspace.js';
 import { openSession } from './sessions.js';
 import { openAccount } from './modals.js';
+import { openProxyManager } from './proxies.js';
 import { remoteTarget, loadRemoteModels, getRemoteCatalog, openRunOn, remoteSummary, remoteAvail } from './remote.js';
 
 const host = u => { try { return new URL(u).host; } catch { return u; } };
@@ -15,10 +17,20 @@ const host = u => { try { return new URL(u).host; } catch { return u; } };
 export function initConnect() {
   $('#c-form').addEventListener('submit', onSubmit);
   $('#c-account').addEventListener('click', openAccount);
-  $('#c-cors').addEventListener('click', () => openCorsTester($('#c-url').value.trim() || 'http://localhost:11434', $('#c-key').value.trim(), $('#c-proxy').checked ? $('#c-proxy-url').value.trim() : ''));
-  $('#c-proxy').addEventListener('change', paintProxyBox);
+  $('#c-cors').addEventListener('click', () => openCorsTester($('#c-url').value.trim() || 'http://localhost:11434', $('#c-key').value.trim(), getActiveProxyUrl()));
+  $('#c-proxy').addEventListener('change', () => {
+    setUseProxy($('#c-proxy').checked, $('#c-proxy-url').value.trim() || 'http://localhost:11435');
+    paintProxyBox();
+  });
+  $('#c-proxy-url').addEventListener('change', () => {
+    const val = $('#c-proxy-url').value.trim();
+    if (val) upsertSingleProxyUrl(val);
+  });
+  $('#c-proxy-manage').addEventListener('click', openProxyManager);
   $('#c-url').addEventListener('input', paintProxyBox);
   paintProxyBox();
+  on('proxy', paintProxyBox);
+  on('settings', paintProxyBox);
   on('user', () => { paintAccountButton(); paintRemoteCard(); });
   on('hosts', paintRemoteCard);
   on('target', paintRemoteCard);
@@ -76,6 +88,7 @@ export async function showConnect() {
   show('connect');
   paintAccountButton();
   paintRemoteCard();
+  paintProxyBox();
   $('#c-err').hidden = true;
   await paintSaved();
 }
@@ -92,20 +105,31 @@ async function paintSaved() {
     box.append(h('div', { class: 'conn' },
       h('button', { class: 'conn-main', type: 'button', title: c.lastModel ? `Connect and continue with ${c.lastModel}` : 'Connect', onclick: () => connect(c, { resume: true }) },
         h('b', {}, c.label || host(c.url)),
-        h('span', { class: 'dim small' }, c.url + (c.key ? ' · 🔑 key saved' : '') + (c.proxy ? ` · via proxy ${c.proxyUrl}` : '')),
+        h('span', { class: 'dim small' }, c.url + (c.key ? ' · 🔑 key saved' : '')),
         h('span', { class: 'dim small' }, (c.lastModel ? '▸ ' + c.lastModel : 'No model chosen yet') + (c.lastUsed ? ' · ' + fmt.ago(c.lastUsed) : ''))),
       h('div', { class: 'conn-act' },
         h('button', { class: 'btn sm', type: 'button', onclick: () => connect(c, { resume: false }) }, 'Models'),
-        h('button', { class: 'btn sm ghost', type: 'button', title: 'Test CORS / connection in a new tab', onclick: () => openCorsTester(c.url, c.key, c.proxy ? c.proxyUrl : '') }, '🩺'),
+        h('button', { class: 'btn sm ghost', type: 'button', title: 'Test CORS / connection in a new tab', onclick: () => openCorsTester(c.url, c.key, getActiveProxyUrl()) }, '🩺'),
         h('button', { class: 'btn sm ghost', type: 'button', title: 'Edit', onclick: () => fillForm(c) }, '✎'),
         h('button', { class: 'btn sm ghost danger', type: 'button', title: 'Remove', onclick: () => removeConn(c) }, '×'))));
   }
 }
 
-/** Show the proxy URL field and the exact command to start the proxy for the entered server. */
+/** Show the global proxy URL field and the exact command to start the proxy for the entered server. */
 function paintProxyBox() {
-  const on = $('#c-proxy').checked;
-  $('#c-proxy-box').hidden = !on;
+  const cb = $('#c-proxy');
+  const box = $('#c-proxy-box');
+  const urlEl = $('#c-proxy-url');
+  const nameEl = $('#c-proxy-name');
+  if (!cb || !box) return;
+  const on = !!state.settings.useProxy;
+  cb.checked = on;
+  box.hidden = !on;
+  const cur = getDisplayProxy();
+  if (document.activeElement !== urlEl) {
+    urlEl.value = cur?.url || 'http://localhost:11435';
+  }
+  if (nameEl) nameEl.textContent = cur?.label ? `(${proxyLabel(cur)})` : '';
   if (!on) return;
   let target = 'http://127.0.0.1:11434';
   try { target = normalizeUrl($('#c-url').value || target); } catch { /* keep default */ }
@@ -118,9 +142,6 @@ function fillForm(c) {
   $('#c-url').value = c.url;
   $('#c-key').value = c.key || '';
   $('#c-label').value = c.label || '';
-  $('#c-proxy').checked = !!c.proxy;
-  if (c.proxyUrl) $('#c-proxy-url').value = c.proxyUrl;
-  paintProxyBox();
   $('#c-url').focus();
 }
 
@@ -138,9 +159,13 @@ async function onSubmit(e) {
   let list = [];
   try { list = await state.store.listConnections(); } catch { /* ignore */ }
   const existing = list.find(c => c.url === url);
-  const proxy = $('#c-proxy').checked;
-  const proxyUrl = $('#c-proxy-url').value.trim() || 'http://localhost:11435';
-  const conn = { ...(existing || {}), id: existing?.id || uid(), url, key, label: label || existing?.label || '', created: existing?.created || Date.now(), proxy, proxyUrl: proxy ? proxyUrl : (existing?.proxyUrl || '') };
+  if ($('#c-proxy').checked) {
+    const pUrl = $('#c-proxy-url').value.trim() || 'http://localhost:11435';
+    upsertSingleProxyUrl(pUrl);
+  }
+  const conn = { ...(existing || {}), id: existing?.id || uid(), url, key, label: label || existing?.label || '', created: existing?.created || Date.now() };
+  delete conn.proxy;
+  delete conn.proxyUrl;
   if (!$('#c-savekey').checked) conn._noKey = true;
   connect(conn, { resume: false });
 }
@@ -198,9 +223,10 @@ export async function connect(conn, { resume, restore = null }) {
     state.conn = null;
     err.hidden = false;
     err.replaceChildren();
+    const activeProxy = getActiveProxyUrl();
     err.append(`Could not connect to ${conn.url}: ${e.message}\n\nChecklist:\n• Is Ollama running and reachable from this browser?\n• CORS: start Ollama with OLLAMA_ORIGINS="*" (or this site's origin)\n• If this page is https, the API must be https too (browsers block mixed content)\n• If the server needs an API key, enter it\n\n`,
-      h('button', { class: 'btn sm primary', type: 'button', onclick: () => openCorsTester(conn.url, conn.key, conn.proxy ? conn.proxyUrl : '') }, '🩺 Diagnose with the CORS tester ↗'),
-      conn.proxy ? '' : h('button', { class: 'btn sm', type: 'button', style: { marginLeft: '6px' }, onclick: () => { fillForm(conn); $('#c-proxy').checked = true; paintProxyBox(); $('#c-proxy-box').scrollIntoView({ block: 'center' }); } }, 'Use CORS proxy instead'));
+      h('button', { class: 'btn sm primary', type: 'button', onclick: () => openCorsTester(conn.url, conn.key, activeProxy) }, '🩺 Diagnose with the CORS tester ↗'),
+      activeProxy ? '' : h('button', { class: 'btn sm', type: 'button', style: { marginLeft: '6px' }, onclick: () => { setUseProxy(true, $('#c-proxy-url').value.trim() || 'http://localhost:11435'); paintProxyBox(); $('#c-proxy-box').scrollIntoView({ block: 'center' }); } }, 'Use CORS proxy instead'));
   } finally {
     buttons.forEach(b => { b.disabled = false; });
     $('#c-go').textContent = 'Connect';

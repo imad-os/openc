@@ -24,7 +24,11 @@ export const DEFAULT_SETTINGS = Object.freeze({
   searchProvider: 'auto', // auto | ollama | jina | searxng | duckduckgo | wikipedia
   ollamaKey: '',          // ollama.com API key (web search/fetch)
   jinaKey: '',            // optional Jina key (higher limits, search)
-  proxyUrl: '',           // optional CORS proxy, e.g. https://proxy.example.workers.dev/?url={url}
+  proxyUrl: '',           // optional CORS proxy for web_fetch, e.g. https://proxy.example.workers.dev/?url={url}
+  useProxy: false,        // enable global CORS proxy for all Ollama servers
+  proxies: [],            // [{ id, label, url }] saved CORS proxies
+  defaultProxyId: '',     // id of the default proxy to use
+  activeProxyId: '',      // id of the currently selected proxy
   searxngUrl: '',         // optional SearXNG instance with JSON output enabled
   hideCloud: false,       // hide Ollama cloud models (names containing :cloud or -cloud)
   max: { on: false, strategy: 'best', models: [], n: 3, judge: '', planner: '', reviewer: '', parallel: false }, // MAX mode

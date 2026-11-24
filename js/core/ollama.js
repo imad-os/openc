@@ -1,5 +1,6 @@
 // Ollama HTTP API client: requests, NDJSON streaming, retries.
 import { state } from './state.js';
+import { getActiveProxyUrl } from './proxy.js';
 import { sleep } from '../util/misc.js';
 
 export const baseUrl = url => String(url || '').trim().replace(/\/+$/, '').replace(/\/api$/, '');
@@ -17,7 +18,7 @@ export function normalizeUrl(u) {
  */
 export function apiUrl(conn, path) {
   const target = baseUrl(conn.url) + path;
-  const p = conn.proxy && String(conn.proxyUrl || '').trim();
+  const p = getActiveProxyUrl();
   if (!p) return target;
   if (p.includes('{url}')) return p.replace('{url}', encodeURIComponent(target));
   return p.replace(/\/+$/, '') + '/' + target;
@@ -44,8 +45,9 @@ export async function request(path, body, { signal, conn = state.conn } = {}) {
     });
   } catch (e) {
     if (e.name === 'AbortError') throw e;
-    throw new Error(conn.proxy && conn.proxyUrl
-      ? `Cannot reach the CORS proxy ${conn.proxyUrl} (${e.message}). Is ollama-cors-proxy running? From an https page the proxy must be on localhost or https.`
+    const p = getActiveProxyUrl();
+    throw new Error(p
+      ? `Cannot reach the CORS proxy ${p} (${e.message}). Is ollama-cors-proxy running? From an https page the proxy must be on localhost or https.`
       : `Cannot reach ${baseUrl(conn.url)} (${e.message}). The server may be down, or the browser blocked the request (CORS / mixed content). Try "Use CORS proxy".`);
   }
   if (!res.ok) {

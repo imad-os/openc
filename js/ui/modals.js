@@ -10,6 +10,8 @@ import { display, setDisplay, resetDisplay } from './display.js';
 import { showAuth } from './auth.js';
 import { abortAll } from './runs.js';
 import { webFetch, webSearch } from '../agent/web.js';
+import { openProxyManager } from './proxies.js';
+import { getActiveProxy, getDefaultProxy, proxyLabel } from '../core/proxy.js';
 
 const field = (label, el) => h('label', { class: 'fld' }, label, el);
 const check = (el, label) => h('label', { class: 'check' }, el, label);
@@ -141,6 +143,13 @@ export function openSettings(tab = 'general') {
       h('div', { class: 'row' }, h('span', { class: 'dim small' }, 'Volume'), vol,
         h('button', { class: 'btn sm', type: 'button', onclick: () => chime('done', +vol.value) }, 'Test')),
       check(desk, 'Desktop notification when this tab is in the background'),
+      section('Ollama CORS proxies (all servers)'),
+      h('div', { class: 'row-between' },
+        h('div', { class: 'dim small' }, (() => {
+          const act = getActiveProxy(), def = getDefaultProxy();
+          return `Active: ${act ? `${proxyLabel(act)} (${act.url})` : 'Direct (no proxy)'} · Default: ${def ? proxyLabel(def) : 'Direct'}`;
+        })()),
+        h('button', { class: 'btn sm', type: 'button', onclick: () => { close(); openProxyManager(); } }, 'Manage proxies…')),
       section('Cloud sync (Firebase)'),
       h('div', { class: 'dim small' }, getFirebaseConfig() ? `Using project "${getFirebaseConfig().projectId}".` : 'Not configured: local mode only.'),
       fb,

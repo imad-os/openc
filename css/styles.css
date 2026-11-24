@@ -378,6 +378,7 @@ pre.cmd { margin: 0; background: var(--code-bg); border: 1px solid var(--line); 
   #top .grow { display: none }
   .mchip { flex: 1; max-width: none }
   .mchip .tag, .mchip .strength { display: none }
+  .proxybtn { max-width: 92px; padding: 3px 6px }
   .runbar { padding: 6px 10px }
   .running-btn { padding: 3px 8px }
   #perm { max-width: 112px; font-size: 16px; padding: 4px 6px }
@@ -394,6 +395,14 @@ pre.cmd { margin: 0; background: var(--code-bg); border: 1px solid var(--line); 
   .cb-act button { padding: 4px 8px }
   .popover { left: 8px !important; right: 8px; width: auto }
 }
+
+/* proxy selector */
+.proxybtn { display: inline-flex; align-items: center; gap: 5px; max-width: 170px; overflow: hidden; white-space: nowrap; flex: none }
+.proxybtn.on { border-color: var(--ac); color: var(--ac) }
+.proxybtn .px-ic { flex: none; opacity: .85 }
+.srv-proxy { display: flex; align-items: center; gap: 4px; width: 100%; justify-content: flex-start; text-align: left; border-color: var(--line); background: var(--p2); font-size: 0.821rem; padding: 4px 8px; min-width: 0 }
+.srv-proxy.on { border-color: var(--ac); color: var(--ac) }
+.srv-proxy .caret { margin-left: auto }
 
 /* remote control */
 .runon { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: none }
