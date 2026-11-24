@@ -98,7 +98,7 @@ export function createView(root, scrollEl = root) {
     },
     note(text, cls = '') { const el = h('div', { class: 'note ' + cls }, text); root.append(el); down(); return el; },
     error(text) { const el = h('div', { class: 'errline' }, text); root.append(el); down(); return el; },
-    block(label) { return makeBlock(root, label, down, scrollEl); },
+    block(label, started) { return makeBlock(root, label, down, scrollEl, started); },
     footer(run, answer) {
       const files = run.files || [];
       const answers = root.querySelectorAll(':scope > .msg.asst');
@@ -149,13 +149,13 @@ function makeThinking(started) {
   el.addEventListener('toggle', () => { if (el.open && dirty) render(); });
   return {
     el,
-    update(t, { done = false } = {}) {
+    update(t, { done = false, duration = 0 } = {}) {
       if (!t) return;
       value = t;
       el.hidden = false;
       const tt = thinkingTitle(t);
       title.textContent = tt ? '· ' + tt : '';
-      if (done) { label.textContent = 'Thought'; }
+      if (done) { label.textContent = duration ? `Thought for ${fmt.dur(duration)}` : 'Thought'; }
       else {
         el.classList.add('live');
         if (!userToggled && !autoOpened && display.thinking !== 'collapsed') { el.open = true; autoOpened = true; }
@@ -165,20 +165,19 @@ function makeThinking(started) {
       if (el.open && !raf) raf = requestAnimationFrame(render);
     },
     /** The answer started (or the message ended): stop the "live" state. */
-    end() {
+    end(duration = 0) {
       if (el.hidden || !el.classList.contains('live')) return;
       el.classList.remove('live');
-      label.textContent = `Thought for ${fmt.dur(Date.now() - started)}`;
+      label.textContent = `Thought for ${fmt.dur(duration || (Date.now() - started))}`;
       if (display.thinking === 'live' && !userToggled) el.open = false;
       if (el.open) render();
     },
   };
 }
 
-function makeBlock(parent, label, down, scrollEl) {
+function makeBlock(parent, label, down, scrollEl, started = Date.now()) {
   const el = h('div', { class: 'msg asst live' });
   const head = h('div', { class: 'who' }, label);
-  const started = Date.now();
   const think = makeThinking(started);
   const text = h('div', { class: 'md' });
   const tools = h('div', { class: 'tools' });
@@ -204,9 +203,9 @@ function makeBlock(parent, label, down, scrollEl) {
       head.append(h('span', { class: 'badge' }, 'retried'));
     },
     tool(call) { think.end(); const c = makeToolCard(call, down, scrollEl); tools.append(c.el); down(); return c; },
-    finish() {
+    finish(duration = 0) {
       if (raf) { cancelAnimationFrame(raf); paint(true); }
-      think.end();
+      think.end(duration);
       el.classList.remove('live');
       if (!value.trim() && think.el.hidden && !tools.children.length) el.remove();
     },
@@ -275,14 +274,22 @@ function makeToolCard(call, down, scrollEl) {
   return card;
 }
 
-/** Re-render a stored conversation. */
-export function renderThread(view, messages) {
-  for (let i = 0; i < messages.length; i++) {
+/** Render messages into view (optionally from start index). Returns active live block info if last message has _live. */
+export function renderThread(view, messages, from = 0) {
+  let live = null;
+  for (let i = from; i < messages.length; i++) {
     const m = messages[i];
     if (m.role === 'user') { if (m._auto) view.note('↻ ' + firstLine(m.content, 90), 'auto'); else view.user(m); continue; }
     if (m.role !== 'assistant') continue;
+    if (m._live) {
+      const b = view.block(m._agent || 'assistant', m._started || Date.now());
+      if (m.thinking) b.thinking(m.thinking);
+      if (m.content) b.text(m.content);
+      live = { block: b, index: i, started: m._started || Date.now() };
+      continue;
+    }
     const b = view.block(m._agent || 'assistant');
-    if (m.thinking) b.thinking(m.thinking, { done: true });
+    if (m.thinking) b.thinking(m.thinking, { done: true, duration: m._thinkMs || 0 });
     b.text(m.content || '', true);
     for (const call of m.tool_calls || []) {
       const card = b.tool(call);
@@ -293,6 +300,7 @@ export function renderThread(view, messages) {
     b.finish();
     if (m._run) view.footer(m._run, m.content);
   }
+  return live;
 }
 
 /* ---------- one view per conversation (running ones keep rendering while hidden) ---------- */

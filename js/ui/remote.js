@@ -8,12 +8,15 @@ import { $, h, toast, popover, modal, confirmDialog, promptDialog } from '../uti
 import { uid, fmt, firstLine } from '../util/misc.js';
 import * as R from '../core/remote.js';
 import { listModels, showModel } from '../core/ollama.js';
-import { threadView, renderThread } from './chat.js';
+import { threadView, renderThread, thinkingTitle } from './chat.js';
 import { runs, describe, setRemoteBar } from './runs.js';
 import { persistSession, paintSessions, renderTodos } from './sessions.js';
 import { runTurn } from './composer.js';
 import { maxConfig } from '../agent/max.js';
-import { runBench, benchable } from '../agent/bench.js';
+import { runBench } from '../agent/bench.js';
+import { openAccount } from './modals.js';
+
+const isErrText = t => /^(Error|Denied|Interrupted)/.test(String(t || ''));
 
 /* =====================================================================
  *  Phone side
@@ -89,17 +92,57 @@ function watchCurrent() {
 function applyMessages(s, msgs, sig) {
   if (state.session?.id !== s.id || runs.has(s.id) || s._remoteSig === sig) return;
   s._remoteSig = sig;
-  s.messages = msgs;
-  s._synced = msgs.length;
+  const last = msgs[msgs.length - 1];
+  const hasLive = !!last?._live;
+  const finalMsgs = hasLive ? msgs.slice(0, -1) : msgs;
+  s.messages = finalMsgs;
+  s._synced = finalMsgs.length;
   const view = threadView(s);
-  view.clear();
-  if (msgs.length) renderThread(view, msgs);
-  view.rendered = true;
-  if (s._optimistic) {
-    // keep showing what you just sent until the PC has stored it
-    if (msgs.slice(-4).some(m => m.role === 'user' && m.content === s._optimistic)) s._optimistic = '';
-    else view.user({ role: 'user', content: s._optimistic });
+  const finalJson = finalMsgs.map(m => JSON.stringify(m));
+  const rv = s._rv || {};
+  const prefixMatches = view.rendered && rv.rendered && Array.isArray(rv.finalJson)
+    && finalJson.length >= rv.finalJson.length
+    && rv.finalJson.every((j, idx) => j === finalJson[idx]);
+
+  if (s._optEl) { s._optEl.remove(); s._optEl = null; }
+  if (s._optimistic && msgs.slice(-4).some(m => m.role === 'user' && m.content === s._optimistic)) s._optimistic = '';
+
+  let nextLive = null;
+  if (prefixMatches && rv.liveBlock && hasLive && rv.liveIndex === msgs.length - 1 && finalJson.length === rv.finalJson.length) {
+    if (last.thinking) rv.liveBlock.thinking(last.thinking);
+    rv.liveBlock.text(last.content || '');
+    nextLive = { block: rv.liveBlock, index: rv.liveIndex, started: rv.started };
+  } else if (prefixMatches && rv.liveBlock && rv.liveIndex < finalMsgs.length && finalMsgs[rv.liveIndex]?.role === 'assistant') {
+    const m = finalMsgs[rv.liveIndex];
+    if (m.thinking) rv.liveBlock.thinking(m.thinking);
+    rv.liveBlock.text(m.content || '', true);
+    let nextIdx = rv.liveIndex + 1;
+    for (const call of m.tool_calls || []) {
+      const card = rv.liveBlock.tool(call);
+      const next = finalMsgs[nextIdx];
+      if (next?.role === 'tool') { nextIdx++; card.result(next.content); card.status(isErrText(next.content) ? 'err' : 'ok'); }
+      else card.status('err');
+    }
+    rv.liveBlock.finish(m._thinkMs || 0);
+    if (m._run) view.footer(m._run, m.content);
+    nextLive = nextIdx < msgs.length ? renderThread(view, msgs, nextIdx) : null;
+  } else if (prefixMatches && !rv.liveBlock) {
+    if (!rv.finalJson.length && msgs.length) view.clear();
+    nextLive = rv.finalJson.length < msgs.length ? renderThread(view, msgs, rv.finalJson.length) : null;
+  } else {
+    view.clear();
+    nextLive = msgs.length ? renderThread(view, msgs) : null;
   }
+
+  view.rendered = true;
+  s._rv = {
+    rendered: true,
+    finalJson,
+    liveBlock: nextLive?.block || null,
+    liveIndex: nextLive ? nextLive.index : -1,
+    started: nextLive?.started || 0,
+  };
+  if (s._optimistic) s._optEl = view.user({ role: 'user', content: s._optimistic });
   view.scroll();
 }
 
@@ -121,19 +164,22 @@ export async function sendRemote(text, hostId) {
   s.agent = agent.id;
   s.model = state.model;
   s.url = state.conn.url;
+  s.think = s.think || state.think || state.settings.think || 'auto';
   $('#title').textContent = s.title;
   const view = threadView(s);
   view.rendered = true;
   if (!s.messages.length) view.clear();
-  view.user({ role: 'user', content: text });
+  s._optEl = view.user({ role: 'user', content: text });
   s._optimistic = text;
   await persistSession(s); // creates the conversation document the PC loads
   try {
     const mx = maxConfig();
-    await R.sendCommand({ host: hostId, type: 'send', session: s.id, text, conn: state.conn.id, model: state.model, agent: agent.id, ...(mx.on ? { max: JSON.stringify(mx).slice(0, 3900) } : {}) });
+    const extra = JSON.stringify({ ...(mx.on ? mx : { on: false }), think: s.think }).slice(0, 3900);
+    await R.sendCommand({ host: hostId, type: 'send', session: s.id, text, conn: state.conn.id, model: state.model, agent: agent.id, max: extra });
     toast(`✓ Sent to ${host.name}${R.isOnline(host) ? '' : ' (queued)'}. You can close this page.`, 4500);
   } catch (e) {
     s._optimistic = '';
+    if (s._optEl) { s._optEl.remove(); s._optEl = null; }
     inp.value = text;
     return toast('Could not send: ' + e.message, 6000);
   }
@@ -235,9 +281,14 @@ const dot = key => h('span', { class: 'hdot ' + key });
 export function paintRunOn() {
   const b = $('#runon');
   if (!b) return;
+  b.hidden = false;
   const avail = R.remoteAvailable();
-  b.hidden = !avail;
-  if (!avail) return;
+  if (!avail) {
+    b.classList.toggle('on', false);
+    b.replaceChildren(h('span', { class: 'hdot local' }), h('span', { class: 'rl' }, 'This device'));
+    b.title = 'Agents run on this device. Sign in to run them on a remote PC.';
+    return;
+  }
   const t = remoteTarget();
   b.classList.toggle('on', !!t || !!host);
   if (t) {
@@ -249,8 +300,8 @@ export function paintRunOn() {
     b.replaceChildren(dot('ready'), h('span', { class: 'rl' }, `Hosting · ${host.name}`));
     b.title = 'This browser is a remote host for your other devices. Click for details.';
   } else {
-    b.replaceChildren(h('span', { class: 'rl' }, '▶ This device'));
-    b.title = 'Agents run in this browser. Click to run them on a remote PC instead.';
+    b.replaceChildren(h('span', { class: 'hdot local' }), h('span', { class: 'rl' }, 'This device'));
+    b.title = 'Agents run on this device. Click to run them on a remote PC instead.';
   }
 }
 
@@ -441,6 +492,10 @@ async function hostSend(h0, cmd) {
   const sid = cmd.session;
   if (!sid) throw new Error('No conversation in the command');
   if (runs.has(sid)) throw new Error('That conversation is already running on this PC');
+  try {
+    const freshSettings = await st.getSettings();
+    if (freshSettings) Object.assign(state.settings, freshSettings);
+  } catch { /* ignore */ }
   const conn = (await st.listConnections()).find(c => c.id === cmd.conn);
   if (!conn) throw new Error('The server is not saved in the account');
   let s = state.session?.id === sid ? state.session : null; // the one open on this PC, so its screen stays in sync
@@ -454,37 +509,71 @@ async function hostSend(h0, cmd) {
   const model = models.find(m => m.name === cmd.model)?.name || models.find(m => m.name === s.model)?.name || models[0]?.name;
   if (!model) throw new Error(`No models found on ${conn.url}`);
   const agent = state.agents.find(a => a.id === (cmd.agent || s.agent) && a.mode === 'primary') || primaryAgents()[0];
+  let max = null, cmdThink = null;
+  try {
+    const mx = cmd.max ? JSON.parse(cmd.max) : null;
+    if (mx?.on) max = mx;
+    if (mx?.think) cmdThink = mx.think;
+  } catch { /* ignore */ }
+  const think = cmdThink || s.think || state.settings.think || 'auto';
   s.agent = agent.id;
   s.model = model;
   s.url = conn.url;
+  s.think = think;
   const view = threadView(s);
   if (!view.rendered) { view.clear(); if (s.messages.length) renderThread(view, s.messages); view.rendered = true; }
   const um = { role: 'user', content: String(cmd.text || '') };
   s.messages.push(um);
   view.user(um);
   const pub = makePublisher(h0, s);
-  let max = null;
-  try { const mx = cmd.max ? JSON.parse(cmd.max) : null; if (mx?.on) max = mx; } catch { /* ignore */ }
   let out;
   try {
     const servers = async id => {
       const c = (await st.listConnections()).find(x => x.id === id);
       return c ? { conn: c, models: await modelsFor(c), label: c.label || new URL(c.url).host } : null;
     };
-    out = await runTurn(s, { agent, conn, model, models, max, servers, remote: { ask: pub.ask }, onRun: pub.start });
+    out = await runTurn(s, { agent, conn, model, models, max, think, servers, remote: { ask: pub.ask, onStream: pub.onStream, onStreamEnd: pub.onStreamEnd }, onRun: pub.start });
   } catch (e) { out = { error: e }; }
   pub.finish(out);
 }
 
-/** Mirrors a running turn into live/{session} so other devices can show progress and answer prompts. */
+/** Mirrors a running turn into live/{session} and streams partial thinking/text to messages so phones render identically to local mode. */
 function makePublisher(h0, s) {
   let rec = null, timer = 0, debounce = 0, lastSig = '', pending = null;
+  let streamTimer = 0, lastStreamAt = 0, latestStream = null, liveSeq = -1, liveThinking = '';
+
+  const flushStream = () => {
+    streamTimer = 0;
+    const ev = latestStream;
+    if (!ev || ev.seq < s.messages.length) return;
+    lastStreamAt = Date.now();
+    liveSeq = ev.seq;
+    R.writeLiveMessage(s.id, ev.seq, {
+      role: 'assistant',
+      _agent: ev.agent || s.agent || 'assistant',
+      _live: true,
+      _started: ev.started || Date.now(),
+      thinking: ev.thinking || '',
+      content: ev.content || '',
+    }).catch(e => console.warn('live msg', e));
+  };
+
+  const cancelStream = () => {
+    clearTimeout(streamTimer);
+    streamTimer = 0;
+    latestStream = null;
+    liveThinking = '';
+  };
+
   const write = () => {
     if (!rec) return;
     const d = describe(rec);
-    lastSig = [d.phase, d.detail, d.step, pending?.id].join('|');
+    const detail = d.phase === 'thinking' && liveThinking
+      ? (thinkingTitle(liveThinking) || firstLine(liveThinking, 120) || d.detail || '')
+      : (d.detail || '');
+    lastSig = [d.phase, detail, d.step, pending?.id].join('|');
     R.writeLive(s.id, {
-      host: R.hostId(), hostName: h0.name, state: 'running', phase: `${d.icon} ${d.phase}`, detail: String(d.detail || '').slice(0, 1500), health: d.health,
+      host: R.hostId(), hostName: h0.name, state: 'running', phase: `${d.icon} ${d.phase}`, detail: String(detail).slice(0, 1500), health: d.health,
       step: d.step || 1, maxSteps: d.maxSteps || 0, since: Date.now() - d.inPhase, started: rec.run.started, title: s.title,
       ...(pending ? { askKind: pending.kind, askText: pending.text, askOptions: pending.options, askId: pending.id } : {}),
     }).catch(e => console.warn('live', e));
@@ -492,12 +581,23 @@ function makePublisher(h0, s) {
   const onStatus = ev => {
     if (!rec || ev.detail !== rec.run) return;
     const d = describe(rec);
-    if ([d.phase, d.detail, d.step, pending?.id].join('|') === lastSig) return;
+    const detail = d.phase === 'thinking' && liveThinking
+      ? (thinkingTitle(liveThinking) || firstLine(liveThinking, 120) || d.detail || '')
+      : (d.detail || '');
+    if ([d.phase, detail, d.step, pending?.id].join('|') === lastSig) return;
     clearTimeout(debounce);
     debounce = setTimeout(write, 500);
   };
   return {
     start(r) { rec = r; bus.addEventListener('run-status', onStatus); write(); timer = setInterval(write, 5000); },
+    onStream(ev) {
+      latestStream = ev;
+      liveThinking = ev.thinking || '';
+      const wait = 550 - (Date.now() - lastStreamAt);
+      if (wait <= 0) { clearTimeout(streamTimer); flushStream(); }
+      else if (!streamTimer) streamTimer = setTimeout(flushStream, wait);
+    },
+    onStreamEnd() { cancelStream(); },
     ask(kind, text, options) {
       const id = uid();
       pending = { id, kind, text: String(text || '').slice(0, 4000), options: (options || []).slice(0, 20).map(o => String(o).slice(0, 200)) };
@@ -508,6 +608,9 @@ function makePublisher(h0, s) {
     finish(out) {
       clearInterval(timer);
       clearTimeout(debounce);
+      cancelStream();
+      if (liveSeq >= 0 && s.messages.length <= liveSeq) R.deleteMessage(s.id, liveSeq).catch(() => {});
+      liveSeq = -1;
       bus.removeEventListener('run-status', onStatus);
       rec = null;
       const e = out?.error;
@@ -574,7 +677,15 @@ async function onUser() {
 
 export function initRemote() {
   setRemoteBar(paintRemoteBar);
-  $('#runon').addEventListener('click', openRunOn);
+  $('#runon').addEventListener('click', () => {
+    if (!R.remoteAvailable()) {
+      toast('Running on this device. Sign in via Account to connect a remote PC.', 4000);
+      openAccount();
+      return;
+    }
+    openRunOn();
+  });
+  paintRunOn();
   on('runs', () => { if (host) { clearTimeout(beat); beat = setTimeout(() => R.writeHost(host?.name, runs.size).catch(() => {}), 800); } });
   setInterval(paintRunOn, 15000);
   on('session', watchCurrent);

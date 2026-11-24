@@ -87,7 +87,7 @@ function noteFail(run, model, e) {
 }
 
 /** Stream one model request with a per-step controller that the UI can abort to retry. */
-async function requestStep(run, body, block, signal, prefix, streamTools) {
+async function requestStep(run, body, block, signal, prefix, streamTools, streamHook) {
   const S = state.settings;
   // Native tool calls arrive only when complete (silence while the model writes a file): be patient.
   const nativeTools = !!body.tools;
@@ -97,11 +97,11 @@ async function requestStep(run, body, block, signal, prefix, streamTools) {
     const step = new AbortController();
     const onAbort = () => step.abort();
     signal.addEventListener('abort', onAbort, { once: true });
-    let manual = false;
+    let manual = false, thinkStart = 0, thinkEnd = 0;
     run.retryStep = () => { manual = true; step.abort(); };
     setPhase(run, 'waiting', `${prefix}sent ${fmtK(JSON.stringify(body.messages).length / 3.6)} tokens of context`, { chars: 0, firstTokenAt: 0 });
     try {
-      return await chatStream(body, {
+      const res = await chatStream(body, {
         signal: step.signal,
         conn: run.conn,
         firstTokenTimeout: nativeTools && first ? Math.max(first, 1800000) : first,
@@ -113,6 +113,8 @@ async function requestStep(run, body, block, signal, prefix, streamTools) {
           if (!st.firstTokenAt) st.firstTokenAt = now;
           st.lastActivity = now;
           st.chars = acc.thinking.length + acc.content.length;
+          if (acc.thinking && !thinkStart) thinkStart = now;
+          if ((m.content || m.tool_calls?.length) && thinkStart && !thinkEnd) thinkEnd = now;
           let phase = m.tool_calls?.length ? 'calling' : m.content ? 'writing' : m.thinking ? 'thinking' : st.phase;
           let detail = phase === 'calling' ? 'tool calls received' : '';
           let shown = acc.content;
@@ -131,8 +133,11 @@ async function requestStep(run, body, block, signal, prefix, streamTools) {
           st.detail = prefix + detail;
           if (acc.thinking) block.thinking(acc.thinking);
           block.text(shown);
+          streamHook?.({ thinking: acc.thinking, content: shown, phase, detail, started: thinkStart || st.firstTokenAt || now });
         },
       });
+      if (thinkStart) res._thinkMs = (thinkEnd || Date.now()) - thinkStart;
+      return res;
     } catch (e) {
       const stalled = e instanceof StallError || (manual && !signal.aborted);
       if (!signal.aborted && !manual) noteFail(run, body.model, e);
@@ -167,7 +172,9 @@ export async function runAgent({ agent, thread, view, signal, run, hooks = {}, d
     const base = await systemPrompt(agent, thread, names, run.fs);
     return streamTools && names.length ? base + '\n\n' + toolProtocolPrompt(names, subagents()) : base;
   };
-  let think = caps.includes('thinking') && S.think !== 'auto' ? (S.think === 'on' ? true : S.think === 'off' ? false : S.think) : undefined;
+  const reqThink = hooks.think ?? state.think ?? S.think ?? 'auto';
+  const canThink = !caps.length || caps.includes('thinking');
+  let think = canThink && reqThink !== 'auto' ? (reqThink === 'on' ? true : reqThink === 'off' ? false : reqThink) : undefined;
   const budget = Math.max(2048, Math.floor(S.num_ctx * 0.75) - 512);
   const canWrite = names.some(n => TOOLS[n].perm === 'edit');
   const label = agent.name + (depth ? ' · subagent' : '');
@@ -216,8 +223,13 @@ export async function runAgent({ agent, thread, view, signal, run, hooks = {}, d
 
     let res;
     try {
-      res = await requestStep(run, body, block, signal, prefix, useText);
+      const streamHook = !depth && hooks.onStream
+        ? payload => hooks.onStream({ ...payload, seq: thread.messages.length, step: run.status.step, agent: agent.name })
+        : null;
+      res = await requestStep(run, body, block, signal, prefix, useText, streamHook);
+      if (!depth) hooks.onStreamEnd?.();
     } catch (e) {
+      if (!depth) hooks.onStreamEnd?.();
       block.finish();
       if (e instanceof HttpError && body.tools && /does not support tools|tools? (are|is) not supported/i.test(e.detail)) {
         names = [];
@@ -265,7 +277,10 @@ export async function runAgent({ agent, thread, view, signal, run, hooks = {}, d
     block.text(content, true);
 
     const msg = { role: 'assistant', content, _agent: agent.name };
-    if (res.thinking) msg.thinking = res.thinking;
+    if (res.thinking) {
+      msg.thinking = res.thinking;
+      if (res._thinkMs) msg._thinkMs = res._thinkMs;
+    }
     if (calls.length) msg.tool_calls = calls.map(c => ({ function: { name: c.function.name, arguments: parseArgs(c.function.arguments) } }));
     thread.messages.push(msg);
 

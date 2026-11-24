@@ -81,7 +81,10 @@ async function boot() {
   }, { passive: false });
   applyDisplay();
   state.fs = new VirtualFS();
-  try { state.agentId = localStorage.getItem('oc2.agent') || 'build'; } catch { /* ignore */ }
+  try {
+    state.agentId = sessionStorage.getItem('oc2.agent') || 'chat';
+    state.think = sessionStorage.getItem('oc2.think') || 'auto';
+  } catch { /* ignore */ }
   initChat();
   initRuns();
   initAuthUI({ onLocal: startLocal });

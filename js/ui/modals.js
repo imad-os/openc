@@ -1,5 +1,5 @@
 // Dialogs: Settings, Agents editor, Account.
-import { state, emit, saveSettings, DEFAULT_SETTINGS, visibleModels } from '../core/state.js';
+import { state, emit, saveSettings, DEFAULT_SETTINGS, THINK_OPTIONS, saveSessionThink, visibleModels } from '../core/state.js';
 import { h, modal, toast, confirmDialog } from '../util/dom.js';
 import { chime, ensureNotifyPermission } from '../util/sound.js';
 import { ALL_TOOLS, BUILTIN_AGENTS, rebuildAgents } from '../agent/agents.js';
@@ -76,7 +76,7 @@ export function openSettings(tab = 'general') {
     const temp = num(s.temperature, { step: '0.1', min: '0', max: '2' });
     const ctx = num(s.num_ctx, { step: '1024', min: '2048' });
     const steps = num(s.maxSteps, { min: '1', max: '200' });
-    const think = sel(s.think, [['auto', 'Model default'], ['on', 'On'], ['off', 'Off'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High']]);
+    const think = sel(s.think, THINK_OPTIONS.map(([v, l]) => [v, v === 'auto' ? 'Default' : l]));
     const perm = sel(s.perm, [['ask', 'Ask before changes'], ['edits', 'Auto-accept file edits'], ['auto', 'Auto-accept everything']]);
     const hideCloud = cb(s.hideCloud);
     const autoC = cb(s.autoContinue), autoK = cb(s.autoCompact), sound = cb(s.sound), desk = cb(s.desktopNotify);
@@ -176,6 +176,10 @@ export function openSettings(tab = 'general') {
                 hideCloud: hideCloud.checked,
               });
               if (s.desktopNotify && !(await ensureNotifyPermission())) { s.desktopNotify = false; toast('Notifications are blocked in this browser'); }
+              state.think = s.think;
+              try { sessionStorage.setItem('oc2.think', s.think); } catch { /* ignore */ }
+              if (state.session) { state.session.think = s.think; saveSessionThink(state.session.id, s.think); }
+              emit('think', s.think);
               saveSettings();
               if (!applyFirebaseOverride(fb.value.trim())) return;
               close();

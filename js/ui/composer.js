@@ -135,20 +135,21 @@ export async function send() {
   s.agent = agent.id;
   s.model = state.model;
   s.url = state.conn.url;
+  s.think = s.think || state.think || state.settings.think || 'auto';
   $('#title').textContent = s.title;
   inp.value = '';
   autosize();
   const max = maxConfig();
-  return runTurn(s, { agent, conn: state.conn, model: state.model, models: state.models, max: max.on ? max : null });
+  return runTurn(s, { agent, conn: state.conn, model: state.model, models: state.models, max: max.on ? max : null, think: s.think });
 }
 
 /**
  * Run the agent on conversation `s` (its last message is the new user message) and finish up:
  * footer, stats, saving, notifications. Used by send() and by the remote host.
- * opts.remote: { ask({kind,text,options}) → {promise, cancel} } lets another device answer approvals/questions.
+ * opts.remote: { ask({kind,text,options}) → {promise, cancel}, onStream(payload) } lets another device answer approvals/questions and stream thinking.
  * Resolves { error, stopped, result }.
  */
-export async function runTurn(s, { agent, conn, model, models, remote = null, onRun = null, max = null, servers = getServer }) {
+export async function runTurn(s, { agent, conn, model, models, remote = null, onRun = null, max = null, servers = getServer, think = null }) {
   const view = threadView(s);
   const run = createRun({ conn, model, models, fs: fsFor(s) });
   const controller = new AbortController();
@@ -161,6 +162,9 @@ export async function runTurn(s, { agent, conn, model, models, remote = null, on
   const where = () => (visible() ? '' : ` in "${s.title}"`);
 
   const hooks = {
+    think: think || s.think || state.think || state.settings.think || 'auto',
+    onStream: remote?.onStream,
+    onStreamEnd: remote?.onStreamEnd,
     persist: () => persistSession(s),
     getTodos: () => s.todos || [],
     setTodos: list => { s.todos = list; if (visible()) renderTodos(); },

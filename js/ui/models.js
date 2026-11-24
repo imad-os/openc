@@ -10,6 +10,7 @@ import { enterWorkspace, updateTop } from './workspace.js';
 import { persistConn, showConnect } from './connect.js';
 import { remoteTarget, loadRemoteModels } from './remote.js';
 import { openBench, benchLabel } from './bench.js';
+import { saveSessionMeta } from './sessions.js';
 
 const CAP_COLORS = { completion: '#8b98a8', vision: '#b794f6', tools: '#4ade80', thinking: '#fbbf24', audio: '#f472b6', embedding: '#2dd4bf', insert: '#8b98a8' };
 const COUNTERS = ['runs', 'requests', 'evalTokens', 'evalNs', 'promptTokens', 'toolCalls', 'toolErrors', 'fails'];
@@ -294,6 +295,11 @@ export function pickModel(name, { stay = false, srv = null } = {}) {
     state.conn.lastModel = name;
     persistConn(state.conn, { quiet: true });
     setModelMeta(name, { lastUsed: Date.now() });
+  }
+  if (state.session) {
+    state.session.model = name;
+    if (state.conn?.url) state.session.url = state.conn.url;
+    saveSessionMeta(state.session);
   }
   const caps = state.models.find(m => m.name === name)?.caps;
   if (caps?.length && !caps.includes('tools')) toast(`${name} has no tool calling: coding agents will run in chat-only mode. The "chat" agent works fine.`, 4500);

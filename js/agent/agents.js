@@ -51,5 +51,5 @@ export const BUILTIN_AGENTS = [
 
 export function rebuildAgents(custom = []) {
   state.agents = [...BUILTIN_AGENTS, ...custom.filter(a => a?.id && a.name).map(a => ({ ...a, builtin: false, tools: a.tools || [] }))];
-  if (!state.agents.some(a => a.id === state.agentId && a.mode === 'primary')) state.agentId = 'build';
+  if (!state.agents.some(a => a.id === state.agentId && a.mode === 'primary')) state.agentId = 'chat';
 }

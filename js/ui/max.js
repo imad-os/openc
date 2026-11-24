@@ -31,7 +31,7 @@ export function toggleMax() {
   toast(state.settings.max.on ? `MAX mode on (${c.strategy === 'team' ? 'team' : 'best of ' + clampN(c.n)})` : 'MAX mode off');
 }
 
-function openMax() {
+export function openMax() {
   modal((box, close) => {
     const c = maxConfig();
     const shown = pickerItems();

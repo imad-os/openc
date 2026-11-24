@@ -1,11 +1,11 @@
 // URL routing: the address bar follows where you are (#/connect, #/models, #/chat, #/chat/<conversation>),
 // the Back button works, and a refresh returns to the same screen and conversation.
-// The last server and model are remembered in this browser (the URL only holds screen + conversation).
+// Each browser window/tab keeps its own selected server, model, mode, and thinking level in sessionStorage.
 import { state, emit, on } from '../core/state.js';
-import { show, current } from './views.js';
-import { showConnect, connect } from './connect.js';
+import { current } from './views.js';
+import { showConnect } from './connect.js';
 import { showModels, loadModels } from './models.js';
-import { enterWorkspace, updateTop } from './workspace.js';
+import { enterWorkspace, setAgent, setThink, updateTop } from './workspace.js';
 import { openSession, newSession } from './sessions.js';
 import { loadServers, adoptActive } from './servers.js';
 import { remoteTarget, getRemoteCatalog } from './remote.js';
@@ -13,8 +13,25 @@ import { remoteTarget, getRemoteCatalog } from './remote.js';
 const LAST_KEY = 'oc2.last';
 let applying = false;
 
-const readLast = () => { try { return JSON.parse(localStorage.getItem(LAST_KEY) || 'null') || {}; } catch { return {}; } };
-const writeLast = patch => { try { localStorage.setItem(LAST_KEY, JSON.stringify({ ...readLast(), ...patch })); } catch { /* ignore */ } };
+const readLast = () => {
+  try {
+    const win = sessionStorage.getItem(LAST_KEY);
+    if (win) return JSON.parse(win) || {};
+    const shared = JSON.parse(localStorage.getItem(LAST_KEY) || 'null') || {};
+    // New window starts with default chat/auto mode & inherits last server/model hint only once into sessionStorage.
+    return shared.conn ? { conn: shared.conn, model: shared.model || '' } : {};
+  } catch { return {}; }
+};
+const writeLast = patch => {
+  try {
+    const next = { ...readLast(), ...patch };
+    sessionStorage.setItem(LAST_KEY, JSON.stringify(next));
+    if (patch.conn || patch.model) {
+      const shared = JSON.parse(localStorage.getItem(LAST_KEY) || 'null') || {};
+      localStorage.setItem(LAST_KEY, JSON.stringify({ ...shared, ...(patch.conn ? { conn: patch.conn } : {}), ...(patch.model ? { model: patch.model } : {}) }));
+    }
+  } catch { /* ignore */ }
+};
 
 function parseHash(h = location.hash) {
   const m = /^#\/(connect|models|chat)(?:\/([^/?#]+))?/.exec(h || '');
@@ -58,11 +75,15 @@ async function onPop() {
 async function restoreConnection(last) {
   let conns = [];
   try { conns = await state.store.listConnections(); } catch { /* ignore */ }
-  let conn = (last.conn && conns.find(c => c.id === last.conn)) || conns[0] || null;
+  const sessUrl = state.session && !state.session._draft ? state.session.url : '';
+  let conn = (sessUrl && conns.find(c => c.url === sessUrl))
+    || (last.conn && conns.find(c => c.id === last.conn))
+    || conns[0]
+    || null;
   if (!conn && remoteTarget()) {
     try {
       const cat = await getRemoteCatalog();
-      const s = cat?.servers?.[0];
+      const s = (sessUrl && cat?.servers?.find(x => x.url === sessUrl)) || cat?.servers?.[0];
       if (s) conn = { id: s.id, url: s.url, key: '', label: '', created: Date.now() };
     } catch { /* ignore */ }
   }
@@ -71,7 +92,7 @@ async function restoreConnection(last) {
     return;
   }
   state.conn = conn;
-  const preferred = last.model || conn.lastModel || '';
+  const preferred = (state.session && !state.session._draft && state.session.model) || last.model || conn.lastModel || '';
   if (preferred && !state.model) {
     state.model = preferred;
     emit('model');
@@ -112,6 +133,11 @@ export async function restore() {
       await restoreConnection(last);
       return;
     }
+    if (!r.session) {
+      if (last.agent) setAgent(last.agent, { syncSession: false });
+      if (last.think) setThink(last.think, { syncSession: false, save: false });
+      if (last.model) state.model = last.model;
+    }
     enterWorkspace();
     if (r.session) await openSession(r.session);
     await restoreConnection(last);
@@ -124,5 +150,7 @@ export function initRouter() {
   on('route', () => sync(true));
   on('conn', () => { if (state.conn?.id) writeLast({ conn: state.conn.id }); });
   on('model', () => { if (state.model) writeLast({ model: state.model }); });
+  on('agent', id => { if (id) writeLast({ agent: id }); });
+  on('think', v => { if (v) writeLast({ think: v }); });
   window.addEventListener('popstate', onPop);
 }

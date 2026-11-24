@@ -1,9 +1,9 @@
 // Conversations: sidebar list, open/new/rename/delete, incremental persistence, todos panel.
-import { state, on, emit } from '../core/state.js';
+import { state, on, emit, getSessionThink, saveSessionThink } from '../core/state.js';
 import { $, h, toast, confirmDialog, promptDialog } from '../util/dom.js';
 import { uid } from '../util/misc.js';
 import { threadView, showThread, dropThread, renderThread } from './chat.js';
-import { setAgent, updateTop, updateStatus } from './workspace.js';
+import { setAgent, setThink, updateTop, updateStatus } from './workspace.js';
 import { runs, isRunning } from './runs.js';
 import { refreshFiles, removeSessionFiles } from './files.js';
 
@@ -26,7 +26,7 @@ function display(s) {
 
 export const draftSession = () => ({
   id: uid(), title: 'New session', created: Date.now(), updated: Date.now(),
-  url: state.conn?.url || '', model: state.model || '', agent: state.agentId,
+  url: state.conn?.url || '', model: state.model || '', agent: 'chat', think: 'auto',
   files: state.settings.defaultFiles === 'shared' ? 'shared' : 'session',
   todos: [], summary: '', summaryUpto: 0, messages: [], _synced: 0, _draft: true,
 });
@@ -56,6 +56,7 @@ export function persistSession(s = state.session) {
   s.updated = Date.now();
   if (!s.url && state.conn) s.url = state.conn.url;
   if (!s.model && state.model) s.model = state.model;
+  if (s.think) saveSessionThink(s.id, s.think);
   chain = chain.then(async () => {
     const from = s._synced || 0;
     const msgs = s.messages.slice(from).map(forStorage);
@@ -69,6 +70,17 @@ export function persistSession(s = state.session) {
     if (!warned) { warned = true; toast('Could not save the conversation: ' + e.message, 6000); }
   });
   return chain;
+}
+
+/** Update session metadata (e.g. after switching model/mode/think) without rewriting messages. */
+export function saveSessionMeta(s = state.session) {
+  if (!s) return;
+  if (s.think) saveSessionThink(s.id, s.think);
+  if (s._draft || !state.store) return;
+  const meta = metaOf(s);
+  const idx = state.sessions.findIndex(x => x.id === meta.id);
+  if (idx >= 0) state.sessions[idx] = { ...state.sessions[idx], ...meta };
+  chain = chain.then(() => state.store.saveSession(meta, [], s.messages.length)).catch(e => console.warn('saveSessionMeta', e));
 }
 
 /** Re-save from message index i on the next persist (after editing a saved message). */
@@ -91,12 +103,27 @@ export async function openSession(id) {
     try { messages = await state.store.loadMessages(id); } catch (e) { return toast('Could not load: ' + e.message); }
     s = { ...meta, messages, _synced: messages.length };
   }
-  if (s.model && s.model !== state.model && state.models.some(m => m.name === s.model)) { state.model = s.model; updateTop(); }
-  if (s.agent) setAgent(s.agent);
+  if (!s.think) s.think = getSessionThink(s.id) || 'auto';
+  if (s.url && s.url !== state.conn?.url) {
+    const srv = state.servers.find(x => x.conn?.url === s.url && x.status === 'ok');
+    if (srv) {
+      state.conn = srv.conn; state.models = srv.models; state.modelMeta = srv.meta; state.running = srv.running;
+      emit('conn');
+    }
+  }
+  if (s.model && s.model !== state.model && (!state.models.length || state.models.some(m => m.name === s.model))) {
+    state.model = s.model;
+    emit('model');
+    updateTop();
+  }
+  setAgent(s.agent || 'chat', { syncSession: false });
+  setThink(s.think || 'auto', { syncSession: false, save: false });
   display(s);
 }
 
 export function newSession() {
+  setAgent('chat', { syncSession: false });
+  setThink('auto', { syncSession: false, save: false });
   display(draftSession());
   $('#inp').focus();
 }

@@ -155,7 +155,11 @@ main { display: flex; flex-direction: column; min-width: 0; min-height: 0 }
 .mchip b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500 }
 .mchip .favdot { color: var(--fav) }
 .caret { color: var(--dim); font-size: 0.786rem }
-.tbtn { display: none }
+.tbtn, .morebtn { display: none }
+.morebtn { flex: none; padding: 4px 10px; font-weight: 700; letter-spacing: 1px }
+.more-menu { display: flex; flex-direction: column; gap: 6px }
+.more-menu .pop-row { flex-direction: row; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; border: 1px solid var(--line); background: var(--p2) }
+.more-menu .fld { gap: 4px }
 
 /* chat */
 #chat { flex: 1; overflow: auto; padding: 18px; display: flex; flex-direction: column; gap: 14px }
@@ -259,8 +263,10 @@ main { display: flex; flex-direction: column; min-width: 0; min-height: 0 }
 .crow { display: flex; gap: 8px; align-items: flex-end }
 #inp { resize: none; max-height: 220px; min-height: 42px; flex: 1 }
 .pills { display: flex; gap: 6px; align-items: center; flex-wrap: wrap }
-.pill { border: 1px solid var(--line); background: var(--p2); border-radius: 999px; padding: 1px 12px; cursor: pointer; font-size: 0.893rem }
+.pill { border: 1px solid var(--line); background: var(--p2); border-radius: 999px; padding: 2px 11px; cursor: pointer; font-size: 0.893rem; display: inline-flex; align-items: center; gap: 5px }
+.pill:hover { border-color: var(--line2) }
 .pill.on { background: var(--ac-bg); border-color: var(--ac); color: #cfe8ff }
+.pill-dd .caret { opacity: .8 }
 .status { display: flex; justify-content: space-between; gap: 10px; font-size: 0.821rem; color: var(--dim); flex-wrap: wrap }
 
 /* right panel */
@@ -379,17 +385,18 @@ pre.cmd { margin: 0; background: var(--code-bg); border: 1px solid var(--line); 
   /* iOS zooms into inputs smaller than 16px: keep form controls at 16px+ on phones */
   input, select, textarea, #inp, .cb-edit-area, #ved { font-size: max(16px, 1rem) !important }
   #top { padding: 6px 8px; gap: 6px; flex-wrap: nowrap }
-  #top .grow { display: none }
-  .mchip { flex: 1; max-width: none }
+  #top .grow, #proxybtn, #maxbtn, #perm, #t-right { display: none }
+  .morebtn { display: inline-flex; align-items: center; justify-content: center }
+  .runon { max-width: 112px; flex: 0 1 auto; min-width: 48px; padding: 3px 7px; font-size: 0.82rem }
+  .mchip { flex: 1 1 0%; min-width: 72px; max-width: none; overflow: hidden }
   .mchip .tag, .mchip .strength { display: none }
-  .proxybtn { max-width: 92px; padding: 3px 6px }
   .runbar { padding: 6px 10px }
   .running-btn { padding: 3px 8px }
-  #perm { max-width: 112px; font-size: 16px; padding: 4px 6px }
   #chat { padding: 10px 10px 16px; gap: 10px }
   #composer { padding: 6px 8px calc(6px + env(safe-area-inset-bottom)) }
   .crow { gap: 6px }
   #b-send, #b-stop { padding: 8px 12px }
+  .sub-hint { display: none }
   .status { font-size: 0.75rem }
   .center { padding: 10px } .card { padding: 18px }
   .connect-card { padding: 0; max-height: calc(100dvh - 20px) }

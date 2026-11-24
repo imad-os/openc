@@ -1,18 +1,20 @@
-// Workspace chrome: top bar (model switcher, permissions), agent pills, status line, sidebar footer.
-import { state, bus, on, primaryAgents, subagents, currentAgent, modelCaps, modelInfo, saveSettings, visibleModels, isCloudModel } from '../core/state.js';
+// Workspace chrome: top bar (model switcher, permissions, mobile more menu), mode + thinking dropdowns, status line, sidebar footer.
+import { state, bus, emit, on, primaryAgents, subagents, currentAgent, modelCaps, modelInfo, saveSettings, isCloudModel, THINK_OPTIONS, thinkLabel, saveSessionThink } from '../core/state.js';
 import { $, h, popover, toast } from '../util/dom.js';
 import { fmt } from '../util/misc.js';
 import { show } from './views.js';
 import { showModels, loadModels, pickModel, starsEl, capTag, meta, statsText, strengthEl, sortModels, reliabilityEl, pickerItems, isMerged } from './models.js';
 import { loadServers, serverLabel, adoptActive } from './servers.js';
-import { paintSessions, renderSession, draftSession, newSession } from './sessions.js';
+import { paintSessions, renderSession, draftSession, newSession, openSession, saveSessionMeta } from './sessions.js';
 import { refreshFiles } from './files.js';
 import { openSettings, openAgents, openAccount } from './modals.js';
 import { showConnect } from './connect.js';
 import { openRunningList, isRunning } from './runs.js';
 import { display, setDisplay } from './display.js';
-import { openSession } from './sessions.js';
 import { initProxies, openProxyPicker, paintProxyControls } from './proxies.js';
+import { getActiveProxy, proxyLabel } from '../core/proxy.js';
+import { maxConfig, clampN } from '../agent/max.js';
+import { openMax } from './max.js';
 import { remoteAvail, openRunOn } from './remote.js';
 
 let lastStats = null;
@@ -21,14 +23,18 @@ export function initWorkspace() {
   $('#mchip').addEventListener('click', e => openModelPicker(e.currentTarget));
   $('#perm').addEventListener('change', e => { state.settings.perm = e.target.value; saveSettings(); });
   $('#t-left').addEventListener('click', () => $('#left').classList.toggle('open'));
-  $('#t-right').addEventListener('click', () => { $('#right').classList.toggle('open'); $('#t-right').classList.remove('has-new'); });
+  $('#t-right').addEventListener('click', () => { $('#right').classList.toggle('open'); $('#t-right').classList.remove('has-new'); $('#t-more')?.classList.remove('has-new'); });
+  $('#t-more')?.addEventListener('click', e => openMoreMenu(e.currentTarget));
   const toggleFiles = () => { setDisplay({ showFiles: !display.showFiles }); paintFilesBtn(); };
   $('#t-files').addEventListener('click', toggleFiles);
   document.addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key === '.') { e.preventDefault(); toggleFiles(); } });
   on('display', paintFilesBtn);
   on('fs-changed', () => {
     if (!display.showFiles) $('#t-files').classList.add('has-new');
-    if (!$('#right').classList.contains('open')) $('#t-right').classList.add('has-new');
+    if (!$('#right').classList.contains('open')) {
+      $('#t-right').classList.add('has-new');
+      $('#t-more')?.classList.add('has-new');
+    }
   });
   paintFilesBtn();
   $('#chat').addEventListener('click', () => $('#left').classList.remove('open'));
@@ -47,15 +53,16 @@ export function initWorkspace() {
   $('#srv-proxy').addEventListener('click', e => openProxyPicker(e.currentTarget));
   initProxies();
   paintProxyControls();
-  on('settings', () => { $('#perm').value = state.settings.perm; updateStatus(); });
+  on('settings', () => { $('#perm').value = state.settings.perm; paintAgents(); updateStatus(); });
   on('conn', () => { paintServer(); updateTop(); });
   on('model', updateTop);
   on('models', updateTop);
   on('servers', updateTop);
   on('model-meta', updateTop);
   on('agents', () => { paintAgents(); updateStatus(); });
+  on('think', () => { paintAgents(); updateStatus(); });
   on('llm-stats', s => { lastStats = s; updateStatus(); });
-  on('session', s => { lastStats = s?._lastStats || null; updateStatus(); });
+  on('session', s => { lastStats = s?._lastStats || null; paintAgents(); updateStatus(); });
   on('busy', updateStatus);
   on('user', paintAccount);
 }
@@ -88,10 +95,30 @@ export function enterWorkspace() {
   setTimeout(() => $('#inp').focus());
 }
 
-export function setAgent(id) {
+export function setAgent(id, { syncSession = true } = {}) {
   if (!primaryAgents().some(a => a.id === id)) return;
   state.agentId = id;
-  try { localStorage.setItem('oc2.agent', id); } catch { /* ignore */ }
+  try { sessionStorage.setItem('oc2.agent', id); } catch { /* ignore */ }
+  emit('agent', id);
+  if (syncSession && state.session) {
+    state.session.agent = id;
+    saveSessionMeta(state.session);
+  }
+  paintAgents();
+  updateStatus();
+}
+
+export function setThink(level, { syncSession = true, save = true } = {}) {
+  const valid = THINK_OPTIONS.some(([k]) => k === level) ? level : 'auto';
+  state.think = valid;
+  try { sessionStorage.setItem('oc2.think', valid); } catch { /* ignore */ }
+  emit('think', valid);
+  if (syncSession && state.session) {
+    state.session.think = valid;
+    saveSessionThink(state.session.id, valid);
+  }
+  state.settings.think = valid;
+  if (save && state.store) saveSettings();
   paintAgents();
   updateStatus();
 }
@@ -102,14 +129,99 @@ export function cycleAgent() {
   setAgent(list[(i + 1) % list.length].id);
 }
 
+function openAgentMenu(anchor) {
+  popover(anchor, (el, close) => {
+    const list = h('div', { class: 'pop-list' });
+    list.append(h('div', { class: 'pop-sec' }, 'Mode'));
+    for (const a of primaryAgents()) {
+      const onNow = a.id === state.agentId;
+      list.append(h('div', {
+        class: 'pop-row' + (onNow ? ' on' : ''),
+        onclick: () => { close(); setAgent(a.id); },
+      },
+      h('div', { class: 'pr-main' }, h('span', { class: 'pr-name' }, a.name), onNow ? h('span', { class: 'dim small', style: { marginLeft: 'auto' } }, '✓') : null),
+      a.desc ? h('div', { class: 'dim small' }, a.desc) : null));
+    }
+    el.append(list);
+  });
+}
+
+function openThinkMenu(anchor) {
+  const cur = state.think || 'auto';
+  popover(anchor, (el, close) => {
+    const list = h('div', { class: 'pop-list' });
+    list.append(h('div', { class: 'pop-sec' }, 'Thinking level'));
+    for (const [val, label, desc] of THINK_OPTIONS) {
+      const onNow = val === cur;
+      list.append(h('div', {
+        class: 'pop-row' + (onNow ? ' on' : ''),
+        onclick: () => { close(); setThink(val); },
+      },
+      h('div', { class: 'pr-main' }, h('span', { class: 'pr-name' }, label), onNow ? h('span', { class: 'dim small', style: { marginLeft: 'auto' } }, '✓') : null),
+      h('div', { class: 'dim small' }, desc)));
+    }
+    el.append(list);
+  });
+}
+
+function openMoreMenu(anchor) {
+  popover(anchor, (el, close) => {
+    const px = state.settings.useProxy ? getActiveProxy() : null;
+    const mx = maxConfig();
+    const permSel = h('select', {},
+      h('option', { value: 'ask', selected: state.settings.perm === 'ask' }, 'Ask before changes'),
+      h('option', { value: 'edits', selected: state.settings.perm === 'edits' }, 'Auto-accept edits'),
+      h('option', { value: 'auto', selected: state.settings.perm === 'auto' }, 'Auto-accept all'));
+    permSel.addEventListener('change', () => {
+      state.settings.perm = permSel.value;
+      $('#perm').value = permSel.value;
+      saveSettings();
+    });
+    const hasNew = $('#t-right')?.classList.contains('has-new');
+    const row = (label, right, onclick) => h('button', { class: 'pop-row', type: 'button', onclick },
+      h('span', { class: 'pr-name' }, label),
+      right ? h('span', { class: 'dim small' }, right) : null);
+    el.append(h('div', { class: 'more-menu' },
+      row('📁 Files & Todos', hasNew ? 'new ●' : 'Open panel', () => {
+        close();
+        $('#right').classList.add('open');
+        $('#t-right')?.classList.remove('has-new');
+        $('#t-more')?.classList.remove('has-new');
+      }),
+      row('⚡ CORS Proxy', px ? proxyLabel(px) : 'Off (Direct)', () => {
+        close();
+        openProxyPicker(anchor);
+      }),
+      row('✦ MAX mode', mx.on ? `ON ×${clampN(mx.n)}` : 'Off', () => {
+        close();
+        openMax();
+      }),
+      h('label', { class: 'fld', style: { marginTop: '2px' } }, 'Permissions', permSel),
+      h('div', { class: 'row', style: { marginTop: '4px' } },
+        h('button', { class: 'btn sm', type: 'button', style: { flex: '1' }, onclick: () => { close(); showConnect(); } }, 'Servers'),
+        h('button', { class: 'btn sm', type: 'button', style: { flex: '1' }, onclick: () => { close(); openAgents(); } }, 'Agents'),
+        h('button', { class: 'btn sm', type: 'button', style: { flex: '1' }, onclick: () => { close(); openSettings(); } }, 'Settings'))));
+  });
+}
+
 export function paintAgents() {
   const box = $('#pills');
+  if (!box) return;
   box.innerHTML = '';
-  primaryAgents().forEach(a => box.append(h('button', {
-    class: 'pill' + (a.id === state.agentId ? ' on' : ''), type: 'button', title: a.desc, onclick: () => setAgent(a.id),
-  }, a.name)));
+  const agent = currentAgent();
+  if (agent) {
+    box.append(h('button', {
+      class: 'pill pill-dd on', type: 'button', title: (agent.desc ? agent.desc + '\n' : '') + 'Switch mode (Tab)',
+      onclick: e => openAgentMenu(e.currentTarget),
+    }, agent.name, h('span', { class: 'caret' }, '▾')));
+  }
+  const tk = state.think || 'auto';
+  box.append(h('button', {
+    class: 'pill pill-dd' + (tk !== 'auto' ? ' on' : ''), type: 'button', title: 'Thinking level for model reasoning',
+    onclick: e => openThinkMenu(e.currentTarget),
+  }, `Think: ${thinkLabel(tk)}`, h('span', { class: 'caret' }, '▾')));
   const subs = subagents().map(a => a.name).join(', ');
-  box.append(h('span', { class: 'dim small' }, subs ? 'subagents: ' + subs : ''));
+  if (subs) box.append(h('span', { class: 'dim small sub-hint' }, 'subagents: ' + subs));
 }
 
 export function updateTop() {
@@ -132,7 +244,11 @@ export function updateTop() {
 export function updateStatus() {
   const caps = modelCaps();
   const agent = currentAgent();
-  const left = [h('b', {}, agent?.name || ''), ' · ' + (state.model || (state.conn ? 'no model' : 'no server'))];
+  const left = [
+    h('b', {}, agent?.name || ''),
+    ' · ' + (state.model || (state.conn ? 'no model' : 'no server')),
+    ` · think: ${thinkLabel(state.think || 'auto').toLowerCase()}`,
+  ];
   if (caps.length && !caps.includes('tools') && agent?.tools?.length) left.push(h('span', { class: 'warn' }, ' · model has no tool calling (chat only)'));
   if (isRunning(state.session?.id)) left.push(' · running (Esc to stop)');
   $('#st-l').replaceChildren(...left);

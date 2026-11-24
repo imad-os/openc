@@ -75,14 +75,11 @@ export function promptDialog(title, value = '') {
   });
 }
 
-/** Floating panel anchored under an element; closes on outside click / Escape. */
+/** Floating panel anchored near an element; flips upward if near bottom; closes on outside click / Escape. */
 export function popover(anchor, build) {
   document.querySelectorAll('.popover').forEach(p => p._close?.());
   const el = h('div', { class: 'popover' });
   document.body.append(el);
-  const r = anchor.getBoundingClientRect();
-  el.style.top = Math.min(r.bottom + 6, innerHeight - 160) + 'px';
-  el.style.left = Math.max(8, Math.min(r.left, innerWidth - el.offsetWidth - 8)) + 'px';
   const outside = e => { if (!el.contains(e.target) && !anchor.contains(e.target)) close(); };
   const onKey = e => { if (e.key === 'Escape') close(); };
   const close = () => { el.remove(); document.removeEventListener('mousedown', outside, true); document.removeEventListener('keydown', onKey); };
@@ -90,5 +87,19 @@ export function popover(anchor, build) {
   document.addEventListener('keydown', onKey);
   el._close = close;
   build(el, close);
+  const place = () => {
+    if (!el.isConnected) return;
+    const r = anchor.getBoundingClientRect();
+    const w = el.offsetWidth, h0 = el.offsetHeight;
+    const spaceBelow = innerHeight - r.bottom - 8;
+    const spaceAbove = r.top - 8;
+    let top = r.bottom + 6;
+    if (h0 > spaceBelow && spaceAbove > spaceBelow) top = Math.max(8, r.top - h0 - 6);
+    else top = Math.max(8, Math.min(top, innerHeight - h0 - 8));
+    el.style.top = top + 'px';
+    el.style.left = Math.max(8, Math.min(r.left, innerWidth - w - 8)) + 'px';
+  };
+  place();
+  requestAnimationFrame(place);
   return close;
 }

@@ -34,6 +34,28 @@ export const DEFAULT_SETTINGS = Object.freeze({
   max: { on: false, strategy: 'best', models: [], n: 3, judge: '', planner: '', reviewer: '', parallel: false }, // MAX mode
 });
 
+export const THINK_OPTIONS = Object.freeze([
+  ['auto', 'Default', 'Use the model’s default thinking behavior'],
+  ['on', 'On', 'Enable thinking output'],
+  ['off', 'Off', 'Disable thinking (faster replies)'],
+  ['low', 'Low', 'Brief reasoning'],
+  ['medium', 'Medium', 'Balanced reasoning'],
+  ['high', 'High', 'Deep reasoning'],
+]);
+export const thinkLabel = v => (THINK_OPTIONS.find(([k]) => k === v)?.[1] || 'Default');
+
+export function getSessionThink(id) {
+  if (!id) return '';
+  try { return sessionStorage.getItem('oc2.sthink.' + id) || localStorage.getItem('oc2.sthink.' + id) || ''; } catch { return ''; }
+}
+export function saveSessionThink(id, v) {
+  if (!id) return;
+  try {
+    if (v) { sessionStorage.setItem('oc2.sthink.' + id, v); localStorage.setItem('oc2.sthink.' + id, v); }
+    else { sessionStorage.removeItem('oc2.sthink.' + id); localStorage.removeItem('oc2.sthink.' + id); }
+  } catch { /* ignore */ }
+}
+
 export const state = {
   user: null,        // Firebase user (null in local mode)
   store: null,       // LocalStore | CloudStore
@@ -45,7 +67,8 @@ export const state = {
   model: null,
   settings: { ...DEFAULT_SETTINGS },
   agents: [],
-  agentId: 'build',
+  agentId: 'chat',
+  think: 'auto',     // active thinking level for this window/session
   sessions: [],      // session metadata, newest first
   session: null,     // current session incl. messages
   fs: null,          // VirtualFS | DirFS

@@ -102,6 +102,33 @@ export function watchLive(sessionId, cb, onError) {
   return s.F.onSnapshot(s.doc('live', sessionId), d => cb(d.exists() ? d.data() : null), onError);
 }
 
+function quickHash(s) {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
+  return (h >>> 0).toString(36);
+}
+
+const LIVE_MSG_MAX = 500000;
+export async function writeLiveMessage(sessionId, seq, msg) {
+  const s = cloud();
+  if (!s) return;
+  let m = { ...msg };
+  let json = JSON.stringify(m);
+  if (json.length > LIVE_MSG_MAX) {
+    if (typeof m.content === 'string' && m.content.length > 200000) m.content = '…' + m.content.slice(-200000);
+    if (typeof m.thinking === 'string' && m.thinking.length > 200000) m.thinking = '…' + m.thinking.slice(-200000);
+    json = JSON.stringify(m);
+    if (json.length > LIVE_MSG_MAX) json = JSON.stringify({ role: m.role || 'assistant', _agent: m._agent, _live: true, _started: m._started, thinking: String(m.thinking || '').slice(-100000), content: String(m.content || '').slice(-100000) });
+  }
+  await s.F.setDoc(s.doc('sessions', sessionId, 'messages', 'm' + String(seq).padStart(6, '0')), { seq, role: msg.role || 'assistant', json });
+}
+
+export async function deleteMessage(sessionId, seq) {
+  const s = cloud();
+  if (!s) return;
+  await s.F.deleteDoc(s.doc('sessions', sessionId, 'messages', 'm' + String(seq).padStart(6, '0')));
+}
+
 /** Phone side: stored messages of a conversation, live. cb(messages, signature). */
 export function watchMessages(sessionId, cb, onError) {
   const s = cloud(), F = s.F;
@@ -110,7 +137,7 @@ export function watchMessages(sessionId, cb, onError) {
     let sig = '';
     for (const d of snap.docs) {
       const raw = d.data().json || '';
-      sig += d.id + ':' + raw.length + ';';
+      sig += d.id + ':' + raw.length + ':' + quickHash(raw) + ';';
       try { msgs.push(JSON.parse(raw)); } catch { /* skip */ }
     }
     cb(msgs, sig);
