@@ -27,8 +27,8 @@
 :root[data-density=compact] .th { padding: 3px 8px } :root[data-density=compact] #composer { padding: 6px 10px 4px }
 * { box-sizing: border-box }
 html { font-size: var(--fs); -webkit-text-size-adjust: 100%; text-size-adjust: 100% }
-html, body { height: 100%; margin: 0 }
-body { background: var(--bg); color: var(--tx); font: 1rem/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overflow: hidden; touch-action: manipulation; overscroll-behavior: none }
+html, body { height: 100%; margin: 0; touch-action: pan-x pan-y }
+body { background: var(--bg); color: var(--tx); font: 1rem/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overflow: hidden; touch-action: pan-x pan-y; overscroll-behavior: none }
 button, input, select, textarea { font: inherit; color: inherit }
 input, select, textarea { background: var(--p2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; outline: none; width: 100% }
 input:focus, select:focus, textarea:focus { border-color: var(--ac) }
@@ -62,11 +62,14 @@ code, pre { font-family: var(--mono); font-size: var(--code-fs) }
 .btn.google .g { font-weight: 800; color: #4285f4 }
 
 /* layout views */
-.view { position: absolute; inset: 0; height: 100dvh }
+.view { position: absolute; inset: 0; height: 100dvh; touch-action: pan-x pan-y }
 .view.scroll { overflow: auto }
-.center { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px; overflow: auto; background: radial-gradient(900px 500px at 50% -10%, #14233a 0, transparent 60%) }
-.card { width: 100%; max-width: 420px; background: var(--p1); border: 1px solid var(--line); border-radius: 16px; padding: 26px; display: flex; flex-direction: column; gap: 14px; margin: auto }
+.center { display: flex; flex-direction: column; align-items: center; justify-content: flex-start; padding: 20px; overflow: auto; background: radial-gradient(900px 500px at 50% -10%, #14233a 0, transparent 60%) }
+.card { width: 100%; max-width: 420px; background: var(--p1); border: 1px solid var(--line); border-radius: 16px; padding: 26px; display: flex; flex-direction: column; gap: 14px; margin: auto; flex-shrink: 0 }
 .card.wide-card { max-width: 560px }
+.connect-card { padding: 0; gap: 0; max-height: calc(100dvh - 40px); overflow: hidden }
+.connect-head { padding: 18px 24px 14px; border-bottom: 1px solid var(--line); flex: none }
+.connect-body { padding: 16px 24px 24px; overflow-y: auto; flex: 1; min-height: 0; -webkit-overflow-scrolling: touch }
 .card p { margin: 0 }
 .logo { font-size: 1.5rem; font-weight: 700; letter-spacing: .3px }
 .logo.sm { font-size: 1.143rem }
@@ -77,12 +80,13 @@ code, pre { font-family: var(--mono); font-size: var(--code-fs) }
 .msgbox.err { background: #2a1416; border-color: #5a2327; color: #fda4a4 }
 
 /* saved servers */
-#c-saved { display: flex; flex-direction: column; gap: 8px }
-.conn { display: flex; gap: 8px; align-items: stretch; border: 1px solid var(--line); border-radius: var(--radius); background: var(--p2); overflow: hidden }
+#c-saved { display: flex; flex-direction: column; gap: 8px; flex-shrink: 0 }
+.saved-list { display: flex; flex-direction: column; gap: 8px; max-height: 260px; overflow-y: auto; padding-right: 2px; -webkit-overflow-scrolling: touch }
+.conn { display: flex; gap: 8px; align-items: stretch; border: 1px solid var(--line); border-radius: var(--radius); background: var(--p2); overflow: hidden; flex-shrink: 0 }
 .conn:hover { border-color: var(--line2) }
 .conn-main { flex: 1; min-width: 0; text-align: left; background: none; border: 0; padding: 10px 12px; cursor: pointer; display: flex; flex-direction: column; gap: 1px }
 .conn-main > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
-.conn-act { display: flex; gap: 4px; align-items: center; padding-right: 8px }
+.conn-act { display: flex; gap: 4px; align-items: center; padding-right: 8px; flex-shrink: 0 }
 
 /* models */
 .mh { display: flex; gap: 16px; align-items: center; justify-content: space-between; padding: 16px 24px; border-bottom: 1px solid var(--line); flex-wrap: wrap; background: var(--p1); position: sticky; top: 0; z-index: 2 }
@@ -387,7 +391,11 @@ pre.cmd { margin: 0; background: var(--code-bg); border: 1px solid var(--line); 
   .crow { gap: 6px }
   #b-send, #b-stop { padding: 8px 12px }
   .status { font-size: 0.75rem }
-  .center { padding: 12px } .card { padding: 18px }
+  .center { padding: 10px } .card { padding: 18px }
+  .connect-card { padding: 0; max-height: calc(100dvh - 20px) }
+  .connect-head { padding: 14px 16px 12px }
+  .connect-body { padding: 14px 16px 18px }
+  .saved-list { max-height: 220px }
   .mbox { padding: 16px; max-height: 92dvh }
   .modal { padding: 8px; align-items: flex-end }
   .codeblock { margin-left: -2px; margin-right: -2px }

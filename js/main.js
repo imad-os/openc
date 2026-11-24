@@ -74,6 +74,11 @@ async function onAuthChange(user) {
 }
 
 async function boot() {
+  document.addEventListener('gesturestart', e => e.preventDefault(), { passive: false });
+  document.addEventListener('gesturechange', e => e.preventDefault(), { passive: false });
+  document.addEventListener('touchmove', e => {
+    if (e.touches && e.touches.length > 1) e.preventDefault();
+  }, { passive: false });
   applyDisplay();
   state.fs = new VirtualFS();
   try { state.agentId = localStorage.getItem('oc2.agent') || 'build'; } catch { /* ignore */ }

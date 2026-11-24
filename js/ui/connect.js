@@ -93,6 +93,8 @@ export async function showConnect() {
   paintProxyBox();
   $('#c-err').hidden = true;
   await paintSaved();
+  const body = $('.connect-body');
+  if (body) body.scrollTop = 0;
 }
 
 async function paintSaved() {
@@ -103,8 +105,9 @@ async function paintSaved() {
   catch (e) { box.append(h('div', { class: 'msgbox err' }, 'Could not load saved servers: ' + e.message)); }
   if (!list.length) { setTimeout(() => $('#c-url').focus()); return; }
   box.append(h('div', { class: 'sec-title' }, 'Your servers'));
+  const scroller = h('div', { class: 'saved-list' });
   for (const c of list) {
-    box.append(h('div', { class: 'conn' },
+    scroller.append(h('div', { class: 'conn' },
       h('button', { class: 'conn-main', type: 'button', title: c.lastModel ? `Connect and continue with ${c.lastModel}` : 'Connect', onclick: () => connect(c, { resume: true }) },
         h('b', {}, c.label || host(c.url)),
         h('span', { class: 'dim small' }, c.url + (c.key ? ' · 🔑 key saved' : '')),
@@ -115,6 +118,7 @@ async function paintSaved() {
         h('button', { class: 'btn sm ghost', type: 'button', title: 'Edit', onclick: () => fillForm(c) }, '✎'),
         h('button', { class: 'btn sm ghost danger', type: 'button', title: 'Remove', onclick: () => removeConn(c) }, '×'))));
   }
+  box.append(scroller);
 }
 
 /** Show the global proxy URL field and the exact command to start the proxy for the entered server. */
