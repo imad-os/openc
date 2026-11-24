@@ -9,7 +9,7 @@ import { persistSession, draftSession, renderTodos, newSession, markDirty, openS
 import { currentRun, registerRun, unregisterRun, isRunning } from './runs.js';
 import { fsFor } from './files.js';
 import { recordModelStats, showModels } from './models.js';
-import { cycleAgent, setAgent } from './workspace.js';
+import { cycleAgent, setAgent, openModelPicker } from './workspace.js';
 import { openAgents, openSettings } from './modals.js';
 import { remoteTarget, remoteRunning, sendRemote, stopRemote } from './remote.js';
 import { runMax, maxConfig } from '../agent/max.js';
@@ -109,7 +109,10 @@ export async function send() {
   if (!text && !pending.length) return;
   if (text.startsWith('/')) { inp.value = ''; autosize(); return command(text); }
   if (isRunning(state.session?.id)) return toast('This conversation is still running. Stop it, or start a new session (they can run in parallel).');
-  if (!state.model) return showModels();
+  if (!state.conn || !state.model) {
+    openModelPicker($('#mchip'));
+    return toast(state.conn ? 'Select a model first' : 'Add a server or select a model first');
+  }
   unlockAudio();
 
   const s = state.session || (state.session = draftSession());

@@ -86,14 +86,15 @@ async function detectCapabilities() {
 export function showModels() {
   show('models');
   const c = state.conn;
-  $('#m-srv').textContent = isMerged() ? `${state.servers.length} servers` + (c ? ` · connected: ${serverLabel(c)}` : '') : c ? (c.label ? `${c.label} · ${c.url}` : c.url) : '';
-  $('#m-back').hidden = !state.model;
+  $('#m-srv').textContent = isMerged() ? `${state.servers.length} servers` + (c ? ` · connected: ${serverLabel(c)}` : '') : c ? (c.label ? `${c.label} · ${c.url}` : c.url) : 'No server selected';
+  $('#m-back').hidden = !state.store;
   paintModels();
   loadServers();
 }
 
 export function setModelMeta(name, patch, srv = null) {
   const conn = srv ? srv.conn : state.conn;
+  if (!conn) return;
   const store = metaOf(srv);
   store[name] = { url: conn.url, model: name, ...(store[name] || {}), ...patch };
   state.store.updateModelMeta(conn.url, name, patch).catch(e => toast('Could not save: ' + e.message));
@@ -289,9 +290,11 @@ export function pickModel(name, { stay = false, srv = null } = {}) {
     emit('conn');
   }
   state.model = name;
-  state.conn.lastModel = name;
-  persistConn(state.conn, { quiet: true });
-  setModelMeta(name, { lastUsed: Date.now() });
+  if (state.conn) {
+    state.conn.lastModel = name;
+    persistConn(state.conn, { quiet: true });
+    setModelMeta(name, { lastUsed: Date.now() });
+  }
   const caps = state.models.find(m => m.name === name)?.caps;
   if (caps?.length && !caps.includes('tools')) toast(`${name} has no tool calling: coding agents will run in chat-only mode. The "chat" agent works fine.`, 4500);
   emit('model');

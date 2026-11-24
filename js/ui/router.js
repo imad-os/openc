@@ -4,9 +4,11 @@
 import { state, emit, on } from '../core/state.js';
 import { show, current } from './views.js';
 import { showConnect, connect } from './connect.js';
-import { showModels } from './models.js';
-import { enterWorkspace } from './workspace.js';
+import { showModels, loadModels } from './models.js';
+import { enterWorkspace, updateTop } from './workspace.js';
 import { openSession, newSession } from './sessions.js';
+import { loadServers, adoptActive } from './servers.js';
+import { remoteTarget, getRemoteCatalog } from './remote.js';
 
 const LAST_KEY = 'oc2.last';
 let applying = false;
@@ -42,27 +44,77 @@ async function onPop() {
   const r = parseHash();
   applying = true;
   try {
-    if (r.view === 'chat' && state.conn && state.model) {
+    if (r.view === 'connect') await showConnect();
+    else if (r.view === 'models') showModels();
+    else {
       if (current() !== 'ws') enterWorkspace();
       if (r.session) await openSession(r.session);
       else if (state.session && !state.session._draft) newSession();
-    } else if (r.view === 'models' && state.conn) showModels();
-    else await showConnect();
+    }
   } finally { applying = false; sync(true); }
 }
 
-/** After sign-in / local start: go back to where the address says, else to the servers screen. */
+/** Connect to the last/first saved server (or remote PC catalog) in the background without leaving chat. */
+async function restoreConnection(last) {
+  let conns = [];
+  try { conns = await state.store.listConnections(); } catch { /* ignore */ }
+  let conn = (last.conn && conns.find(c => c.id === last.conn)) || conns[0] || null;
+  if (!conn && remoteTarget()) {
+    try {
+      const cat = await getRemoteCatalog();
+      const s = cat?.servers?.[0];
+      if (s) conn = { id: s.id, url: s.url, key: '', label: '', created: Date.now() };
+    } catch { /* ignore */ }
+  }
+  if (!conn) {
+    loadServers();
+    return;
+  }
+  state.conn = conn;
+  const preferred = last.model || conn.lastModel || '';
+  if (preferred && !state.model) {
+    state.model = preferred;
+    emit('model');
+  }
+  emit('conn');
+  try { state.modelMeta = await state.store.listModelMeta(conn.url); } catch { state.modelMeta = {}; }
+  try {
+    await loadModels();
+    adoptActive();
+    const pick = (state.model && state.models.some(m => m.name === state.model) && state.model)
+      || (preferred && state.models.some(m => m.name === preferred) && preferred)
+      || (conn.lastModel && state.models.some(m => m.name === conn.lastModel) && conn.lastModel)
+      || state.models[0]?.name
+      || '';
+    if (pick !== (state.model || '')) {
+      state.model = pick || null;
+      emit('model');
+    }
+    emit('models');
+    updateTop();
+  } catch (e) {
+    console.warn('Initial server connection failed:', e);
+    emit('models');
+    updateTop();
+  }
+  loadServers();
+}
+
+/** After sign-in / local start: open the chat UI immediately (unless URL explicitly asks for #/connect). */
 export async function restore() {
   const r = parseHash();
   const last = readLast();
-  if (!r.view || r.view === 'connect' || !last.conn) return showConnect();
+  if (r.view === 'connect') return showConnect();
   applying = true;
   try {
-    let conn = null;
-    try { conn = (await state.store.listConnections()).find(c => c.id === last.conn); } catch { /* ignore */ }
-    if (!conn) return await showConnect();
-    await showConnect();
-    await connect(conn, { resume: false, restore: { to: r.view, model: last.model, session: r.session } });
+    if (r.view === 'models') {
+      showModels();
+      await restoreConnection(last);
+      return;
+    }
+    enterWorkspace();
+    if (r.session) await openSession(r.session);
+    await restoreConnection(last);
   } finally { applying = false; sync(true); }
 }
 

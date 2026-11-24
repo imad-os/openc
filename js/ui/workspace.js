@@ -1,10 +1,10 @@
 // Workspace chrome: top bar (model switcher, permissions), agent pills, status line, sidebar footer.
-import { state, on, primaryAgents, subagents, currentAgent, modelCaps, modelInfo, saveSettings, visibleModels, isCloudModel } from '../core/state.js';
+import { state, bus, on, primaryAgents, subagents, currentAgent, modelCaps, modelInfo, saveSettings, visibleModels, isCloudModel } from '../core/state.js';
 import { $, h, popover, toast } from '../util/dom.js';
 import { fmt } from '../util/misc.js';
 import { show } from './views.js';
-import { showModels, pickModel, starsEl, capTag, meta, statsText, strengthEl, sortModels, reliabilityEl, pickerItems, isMerged } from './models.js';
-import { serverLabel } from './servers.js';
+import { showModels, loadModels, pickModel, starsEl, capTag, meta, statsText, strengthEl, sortModels, reliabilityEl, pickerItems, isMerged } from './models.js';
+import { loadServers, serverLabel, adoptActive } from './servers.js';
 import { paintSessions, renderSession, draftSession, newSession } from './sessions.js';
 import { refreshFiles } from './files.js';
 import { openSettings, openAgents, openAccount } from './modals.js';
@@ -13,6 +13,7 @@ import { openRunningList, isRunning } from './runs.js';
 import { display, setDisplay } from './display.js';
 import { openSession } from './sessions.js';
 import { initProxies, openProxyPicker, paintProxyControls } from './proxies.js';
+import { remoteAvail, openRunOn } from './remote.js';
 
 let lastStats = null;
 
@@ -47,14 +48,22 @@ export function initWorkspace() {
   initProxies();
   paintProxyControls();
   on('settings', () => { $('#perm').value = state.settings.perm; updateStatus(); });
+  on('conn', () => { paintServer(); updateTop(); });
   on('model', updateTop);
   on('models', updateTop);
+  on('servers', updateTop);
   on('model-meta', updateTop);
   on('agents', () => { paintAgents(); updateStatus(); });
   on('llm-stats', s => { lastStats = s; updateStatus(); });
   on('session', s => { lastStats = s?._lastStats || null; updateStatus(); });
   on('busy', updateStatus);
   on('user', paintAccount);
+}
+
+function paintServer() {
+  const el = $('#srv');
+  if (!el) return;
+  el.textContent = state.conn ? (state.conn.label ? state.conn.label + ' · ' : '') + state.conn.url : 'No server selected';
 }
 
 function paintFilesBtn() {
@@ -66,7 +75,7 @@ function paintFilesBtn() {
 
 export function enterWorkspace() {
   show('ws');
-  $('#srv').textContent = (state.conn.label ? state.conn.label + ' · ' : '') + state.conn.url;
+  paintServer();
   if (!state.session) state.session = draftSession();
   lastStats = null;
   paintAgents();
@@ -106,10 +115,11 @@ export function paintAgents() {
 export function updateTop() {
   const chip = $('#mchip');
   const m = modelInfo();
+  const placeholder = state.conn || state.servers.length ? 'Choose a model' : 'Add server / model';
   chip.replaceChildren(...[
     meta(state.model).fav ? h('span', { class: 'favdot' }, '♥') : null,
-    h('b', {}, state.model || 'Choose a model'),
-    state.model && state.servers.length > 1 ? h('span', { class: 'tag srvtag' }, '🖥 ' + serverLabel(state.conn)) : null,
+    h('b', {}, state.model || placeholder),
+    state.model && state.conn && state.servers.length > 1 ? h('span', { class: 'tag srvtag' }, '🖥 ' + serverLabel(state.conn)) : null,
     state.model ? strengthEl(state.model, { bar: false }) : null,
     ...(m?.caps || []).filter(c => c !== 'completion').map(c => capTag(c, true)),
     h('span', { class: 'caret' }, '▾'),
@@ -120,10 +130,9 @@ export function updateTop() {
 }
 
 export function updateStatus() {
-  if (!state.conn) return;
   const caps = modelCaps();
   const agent = currentAgent();
-  const left = [h('b', {}, agent?.name || ''), ' · ' + (state.model || 'no model')];
+  const left = [h('b', {}, agent?.name || ''), ' · ' + (state.model || (state.conn ? 'no model' : 'no server'))];
   if (caps.length && !caps.includes('tools') && agent?.tools?.length) left.push(h('span', { class: 'warn' }, ' · model has no tool calling (chat only)'));
   if (isRunning(state.session?.id)) left.push(' · running (Esc to stop)');
   $('#st-l').replaceChildren(...left);
@@ -146,30 +155,62 @@ export function paintAccount() {
     h('span', { class: 'ellipsis small' }, u ? (u.email || u.displayName || 'Signed in') : 'Local mode · sign in to sync'));
 }
 
-function openModelPicker(anchor) {
-  if (!state.models.length) return showModels();
+export function openModelPicker(anchor) {
   popover(anchor, (el, close) => {
     const q = h('input', { placeholder: 'Search models…' });
     const list = h('div', { class: 'pop-list' });
-    const allNames = (isMerged() ? state.servers.flatMap(x => (x.status === 'ok' ? x.models : [])) : state.models).map(m => m.name);
-    const cloudN = allNames.filter(isCloudModel).length;
-    const cloudBtn = h('button', { class: 'chip', type: 'button', title: 'Hide models with :cloud in their name (also in Settings)', onclick: () => {
-      state.settings.hideCloud = !state.settings.hideCloud;
-      saveSettings();
-      cloudBtn.classList.toggle('on', state.settings.hideCloud);
-      paint();
-    } }, `☁ Hide :cloud · ${cloudN}`);
-    cloudBtn.classList.toggle('on', !!state.settings.hideCloud);
     const row = m => h('div', {
       class: 'pop-row' + (m.name === state.model && (!m._srv || m._srv.conn.id === state.conn?.id) ? ' on' : ''),
       onclick: () => { close(); pickModel(m.name, { stay: true, srv: m._srv || null }); },
     },
     h('div', { class: 'pr-main' }, h('span', { class: 'pr-name' }, m.name), m._srv ? h('span', { class: 'tag srvtag' }, '🖥 ' + serverLabel(m._srv.conn)) : null, ...(m.caps || []).filter(c => c !== 'completion').map(c => capTag(c, true))),
     h('div', { class: 'pr-sub' }, strengthEl(m.name, { srv: m._srv }), starsEl(m.name, { readonly: true, srv: m._srv }), reliabilityEl(m.name, m._srv), h('span', { class: 'dim small' }, statsText(m.name, true, m._srv))));
+    const cloudBtn = h('button', { class: 'chip', type: 'button', title: 'Hide models with :cloud in their name (also in Settings)', onclick: () => {
+      state.settings.hideCloud = !state.settings.hideCloud;
+      saveSettings();
+      paint();
+    } });
+    const allBtn = h('button', { class: 'btn sm ghost wide', type: 'button', onclick: () => { close(); showModels(); } }, 'All models, ratings and stats →');
+    const srvBtn = h('button', { class: 'btn sm ghost wide', type: 'button', onclick: () => { close(); showConnect(); } }, 'Servers / Add server…');
     const paint = () => {
+      if (!el.isConnected) { bus.removeEventListener('servers', paint); bus.removeEventListener('models', paint); return; }
+      const items = pickerItems();
+      const allNames = (isMerged() ? state.servers.flatMap(x => (x.status === 'ok' ? x.models : [])) : state.models).map(m => m.name);
+      const cloudN = allNames.filter(isCloudModel).length;
+      cloudBtn.hidden = !(cloudN || state.settings.hideCloud);
+      cloudBtn.textContent = `☁ Hide :cloud · ${cloudN}`;
+      cloudBtn.classList.toggle('on', !!state.settings.hideCloud);
+      q.hidden = !items.length;
+      allBtn.hidden = !items.length;
       list.innerHTML = '';
+      if (!items.length) {
+        if (state.servers.some(s => s.status === 'loading')) {
+          list.append(h('div', { class: 'dim pad small' }, 'Loading models from your servers…'));
+        } else if (!state.conn && !state.servers.length) {
+          list.append(
+            h('div', { class: 'dim pad small' }, 'No Ollama server added yet. Add a server to pick a model.'),
+            h('div', { class: 'stack pad-x' },
+              h('button', { class: 'btn primary sm wide', type: 'button', onclick: () => { close(); showConnect(); } }, '+ Add a server'),
+              remoteAvail() ? h('button', { class: 'btn sm wide', type: 'button', onclick: () => { close(); openRunOn(); } }, '💻 Choose a Remote PC') : null));
+        } else {
+          list.append(
+            h('div', { class: 'dim pad small' }, 'No models loaded from your server yet.'),
+            h('div', { class: 'row pad-x' },
+              h('button', { class: 'btn sm', type: 'button', onclick: async e => {
+                const b = e.currentTarget; b.disabled = true; b.textContent = 'Refreshing…';
+                try {
+                  if (state.conn) { await loadModels(); adoptActive(); }
+                  await loadServers({ force: true });
+                  paint();
+                } catch (err) { toast(err.message); }
+                finally { b.disabled = false; b.textContent = 'Refresh'; }
+              } }, 'Refresh'),
+              h('button', { class: 'btn sm primary', type: 'button', onclick: () => { close(); showConnect(); } }, 'Check servers')));
+        }
+        return;
+      }
       const term = q.value.toLowerCase();
-      const ms = pickerItems().filter(m => !term || m.name.toLowerCase().includes(term));
+      const ms = items.filter(m => !term || m.name.toLowerCase().includes(term));
       const favs = sortModels(ms.filter(m => meta(m.name, m._srv).fav), 'rating');
       const recent = sortModels(ms.filter(m => !meta(m.name, m._srv).fav && meta(m.name, m._srv).lastUsed), 'recent').slice(0, 5);
       const shown = new Set([...favs, ...recent]);
@@ -181,8 +222,11 @@ function openModelPicker(anchor) {
       if (!ms.length) list.append(h('div', { class: 'dim pad' }, 'No models match.'));
     };
     q.addEventListener('input', paint);
-    el.append(q, ...(cloudN || state.settings.hideCloud ? [cloudBtn] : []), list, h('button', { class: 'btn sm ghost wide', type: 'button', onclick: () => { close(); showModels(); } }, 'All models, ratings and stats →'));
+    el.append(q, cloudBtn, list, allBtn, srvBtn);
     paint();
-    setTimeout(() => q.focus());
+    if (!state.servers.length) loadServers();
+    bus.addEventListener('servers', paint);
+    bus.addEventListener('models', paint);
+    if (!q.hidden) setTimeout(() => q.focus());
   });
 }

@@ -16,6 +16,7 @@ const host = u => { try { return new URL(u).host; } catch { return u; } };
 
 export function initConnect() {
   $('#c-form').addEventListener('submit', onSubmit);
+  $('#c-back').addEventListener('click', () => enterWorkspace());
   $('#c-account').addEventListener('click', openAccount);
   $('#c-cors').addEventListener('click', () => openCorsTester($('#c-url').value.trim() || 'http://localhost:11434', $('#c-key').value.trim(), getActiveProxyUrl()));
   $('#c-proxy').addEventListener('change', () => {
@@ -86,6 +87,7 @@ export function openCorsTester(url, key = '', proxy = '') {
 
 export async function showConnect() {
   show('connect');
+  $('#c-back').hidden = !state.store;
   paintAccountButton();
   paintRemoteCard();
   paintProxyBox();
